@@ -2,15 +2,34 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import aiohttp
+from aiohttp import web
 import os
 import io
+import asyncio
 
 # ==================== CẤU HÌNH ====================
 DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
 OWNER_ID = int(os.environ["OWNER_ID"])
 API_URL = "https://leakd.up.railway.app/prometheus"
 
-# ==================== KHỞI TẠO BOT ====================
+# Render cấp port qua biến môi trường, mặc định 10000
+PORT = int(os.environ.get("PORT", 10000))
+
+# ==================== KEEP ALIVE WEB SERVER ====================
+async def handle(request):
+    return web.Response(text="🤖 Bot is alive!")
+
+app = web.Application()
+app.router.add_get("/", handle)
+
+async def start_web_server():
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
+    await site.start()
+    print(f"🌐 Web server đang chạy trên port {PORT}")
+
+# ==================== DISCORD BOT ====================
 intents = discord.Intents.default()
 intents.message_content = True
 
@@ -38,17 +57,14 @@ class PrometheusBot(commands.Bot):
 
 bot = PrometheusBot()
 
-# ==================== EVENTS ====================
 @bot.event
 async def on_ready():
     print(f"🤖 Bot online: {bot.user} (ID: {bot.user.id})")
     print(f"👑 Owner ID: {OWNER_ID}")
 
-# ==================== CHECK OWNER ====================
 def is_owner(interaction: discord.Interaction) -> bool:
     return interaction.user.id == OWNER_ID
 
-# ==================== SLASH COMMAND ====================
 @app_commands.check(is_owner)
 @app_commands.command(name="promdeobf", description="Deobfuscate Prometheus Lua script")
 @app_commands.describe(file="File Lua script cần deobfuscate")
@@ -65,7 +81,6 @@ async def promdeobf(interaction: discord.Interaction, file: discord.Attachment):
     
     try:
         file_bytes = await file.read()
-        
         form_data = aiohttp.FormData()
         form_data.add_field('file', file_bytes, filename=file.filename, content_type='application/octet-stream')
         
@@ -111,6 +126,10 @@ async def promdeobf_error(interaction: discord.Interaction, error):
     else:
         await interaction.response.send_message(f"❌ Lỗi: `{str(error)}`", ephemeral=True)
 
-# ==================== RUN ====================
+# ==================== CHẠY SONG SONG ====================
+async def main():
+    await start_web_server()
+    await bot.start(DISCORD_TOKEN)
+
 if __name__ == "__main__":
-    bot.run(DISCORD_TOKEN)
+    asyncio.run(main())
