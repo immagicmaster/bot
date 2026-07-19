@@ -11,9 +11,11 @@ import asyncio
 DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
 OWNER_ID = int(os.environ["OWNER_ID"])
 API_URL = "https://leakd.up.railway.app/prometheus"
-
-# Render cấp port qua biến môi trường, mặc định 10000
 PORT = int(os.environ.get("PORT", 10000))
+
+# GUILD_ID: ID server Discord của bạn (để sync lệnh ngay lập tức)
+# Nếu để trống, lệnh sẽ hiện sau 1-60 phút
+GUILD_ID = os.environ.get("GUILD_ID")
 
 # ==================== KEEP ALIVE WEB SERVER ====================
 async def handle(request):
@@ -27,45 +29,104 @@ async def start_web_server():
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
-    print(f"🌐 Web server đang chạy trên port {PORT}")
+    print(f"🌐 Web server chạy trên port {PORT}")
 
-# ==================== DISCORD BOT ====================
+# ==================== BOT ====================
 intents = discord.Intents.default()
-intents.message_content = True
+intents.message_content = True  # BẮT BUỘC cho prefix command
 
-class PrometheusBot(commands.Bot):
-    def __init__(self):
-        super().__init__(
-            command_prefix="!",
-            intents=intents,
-            owner_id=OWNER_ID
-        )
-        self.session = None
-    
-    async def setup_hook(self):
-        self.session = aiohttp.ClientSession()
-        try:
-            synced = await self.tree.sync()
-            print(f"✅ Đã đồng bộ {len(synced)} slash command(s)")
-        except Exception as e:
-            print(f"❌ Lỗi đồng bộ: {e}")
-    
-    async def close(self):
-        if self.session:
-            await self.session.close()
-        await super().close()
+bot = commands.Bot(command_prefix=".", intents=intents, owner_id=OWNER_ID)
+bot.session = None
 
-bot = PrometheusBot()
+@bot.event
+async def setup_hook():
+    bot.session = aiohttp.ClientSession()
+    
+    # Sync slash command — CÁCH NHANH: sync theo guild
+    if GUILD_ID:
+        guild_obj = discord.Object(id=int(GUILD_ID))
+        bot.tree.copy_global_to(guild=guild_obj)
+        synced = await bot.tree.sync(guild=guild_obj)
+        print(f"✅ Đã sync {len(synced)} lệnh vào server ID {GUILD_ID} (hiện ngay)")
+    else:
+        synced = await bot.tree.sync()
+        print(f"✅ Đã sync {len(synced)} lệnh GLOBAL (có thể mất 1-60 phút để hiện)")
 
 @bot.event
 async def on_ready():
     print(f"🤖 Bot online: {bot.user} (ID: {bot.user.id})")
-    print(f"👑 Owner ID: {OWNER_ID}")
+    print(f"👑 Owner: {OWNER_ID}")
 
-def is_owner(interaction: discord.Interaction) -> bool:
-    return interaction.user.id == OWNER_ID
+# ==================== LỆNH 1: .prom (PREFIX) ====================
+@bot.command(name="prom")
+@commands.is_owner()
+async def prom_prefix(ctx: commands.Context):
+    """
+    Dùng: .prom (và đính kèm file .lua)
+    """
+    if not ctx.message.attachments:
+        await ctx.send("⚠️ Vui lòng đính kèm file `.lua` hoặc `.txt`!", delete_after=10)
+        return
+    
+    attachment = ctx.message.attachments[0]
+    
+    if not attachment.filename.endswith(('.lua', '.txt')):
+        await ctx.send("⚠️ Chỉ chấp nhận file `.lua` hoặc `.txt`!", delete_after=10)
+        return
+    
+    if attachment.size > 5 * 1024 * 1024:
+        await ctx.send("⚠️ File quá lớn! Giới hạn 5MB.", delete_after=10)
+        return
+    
+    async with ctx.typing():
+        try:
+            file_bytes = await attachment.read()
+            form_data = aiohttp.FormData()
+            form_data.add_field('file', file_bytes, filename=attachment.filename, content_type='application/octet-stream')
+            
+            async with bot.session.post(API_URL, data=form_data) as resp:
+                if resp.status != 200:
+                    await ctx.send(f"❌ API lỗi HTTP {resp.status}")
+                    return
+                
+                data = await resp.json()
+                
+                if not data.get("success", False):
+                    await ctx.send(f"❌ API báo lỗi: {data.get('error', 'Không rõ')}")
+                    return
+                
+                code = data.get("deobfuscated_code", "")
+                if not code:
+                    await ctx.send("❌ Không nhận được code từ API!")
+                    return
+                
+                if len(code) < 1900:
+                    await ctx.send(
+                        f"✅ **Deobfuscate thành công!**\n"
+                        f"📁 `{attachment.filename}` | 📏 {len(code)} ký tự\n"
+                        f"```lua\n{code}\n```"
+                    )
+                else:
+                    file_obj = discord.File(
+                        io.BytesIO(code.encode('utf-8')), 
+                        filename=f"deobfuscated_{attachment.filename.replace('.lua', '_clean.lua')}"
+                    )
+                    await ctx.send(
+                        f"✅ **Deobfuscate thành công!**\n📁 `{attachment.filename}` | 📏 {len(code)} ký tự",
+                        file=file_obj
+                    )
+        except Exception as e:
+            await ctx.send(f"❌ Lỗi: `{e}`")
 
-@app_commands.check(is_owner)
+@prom_prefix.error
+async def prom_prefix_error(ctx, error):
+    if isinstance(error, commands.NotOwner):
+        await ctx.send("🚫 Chỉ owner mới dùng được lệnh này!", delete_after=10)
+    else:
+        await ctx.send(f"❌ Lỗi: `{error}`", delete_after=10)
+
+# ==================== LỆNH 2: /promdeobf (SLASH) ====================
+@app_commands.check(lambda i: i.user.id == OWNER_ID)
 @app_commands.command(name="promdeobf", description="Deobfuscate Prometheus Lua script")
 @app_commands.describe(file="File Lua script cần deobfuscate")
 async def promdeobf(interaction: discord.Interaction, file: discord.Attachment):
@@ -92,41 +153,36 @@ async def promdeobf(interaction: discord.Interaction, file: discord.Attachment):
             data = await response.json()
             
             if not data.get("success", False):
-                error_msg = data.get("error", "Không rõ lỗi")
-                await interaction.followup.send(f"❌ API báo lỗi: {error_msg}", ephemeral=True)
+                await interaction.followup.send(f"❌ API báo lỗi: {data.get('error', 'Không rõ')}", ephemeral=True)
                 return
             
-            deobfuscated_code = data.get("deobfuscated_code", "")
-            
-            if not deobfuscated_code:
+            code = data.get("deobfuscated_code", "")
+            if not code:
                 await interaction.followup.send("❌ Không nhận được code từ API!", ephemeral=True)
                 return
             
-            output_filename = f"deobfuscated_{file.filename.replace('.lua', '_clean.lua')}"
-            
-            if len(deobfuscated_code) < 1900:
+            if len(code) < 1900:
                 await interaction.followup.send(
-                    f"✅ **Deobfuscate thành công!**\n📁 `{file.filename}` | 📏 {len(deobfuscated_code)} ký tự\n"
-                    f"```lua\n{deobfuscated_code}\n```"
+                    f"✅ **Deobfuscate thành công!**\n"
+                    f"📁 `{file.filename}` | 📏 {len(code)} ký tự\n"
+                    f"```lua\n{code}\n```"
                 )
             else:
-                file_obj = discord.File(io.BytesIO(deobfuscated_code.encode('utf-8')), filename=output_filename)
+                file_obj = discord.File(
+                    io.BytesIO(code.encode('utf-8')), 
+                    filename=f"deobfuscated_{file.filename.replace('.lua', '_clean.lua')}"
+                )
                 await interaction.followup.send(
-                    f"✅ **Deobfuscate thành công!**\n📁 `{file.filename}` | 📏 {len(deobfuscated_code)} ký tự",
+                    f"✅ **Deobfuscate thành công!**\n📁 `{file.filename}` | 📏 {len(code)} ký tự",
                     file=file_obj
                 )
-    
     except Exception as e:
-        await interaction.followup.send(f"❌ Lỗi: `{str(e)}`", ephemeral=True)
+        await interaction.followup.send(f"❌ Lỗi: `{e}`", ephemeral=True)
 
-@promdeobf.error
-async def promdeobf_error(interaction: discord.Interaction, error):
-    if isinstance(error, app_commands.CheckFailure):
-        await interaction.response.send_message("🚫 Chỉ owner mới dùng được lệnh này!", ephemeral=True)
-    else:
-        await interaction.response.send_message(f"❌ Lỗi: `{str(error)}`", ephemeral=True)
+# Đăng ký slash command
+bot.tree.add_command(promdeobf)
 
-# ==================== CHẠY SONG SONG ====================
+# ==================== CHẠY ====================
 async def main():
     await start_web_server()
     await bot.start(DISCORD_TOKEN)
