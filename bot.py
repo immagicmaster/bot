@@ -6,6 +6,7 @@ from aiohttp import web
 import os
 import io
 import asyncio
+import re
 
 # ==================== CẤU HÌNH ====================
 DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
@@ -28,24 +29,37 @@ async def start_web_server():
     await site.start()
     print(f"🌐 Web server chạy trên port {PORT}")
 
-# ==================== XÓA 2 WATERMARK ====================
+# ==================== XÓA WATERMARK ====================
 def remove_watermarks(code: str) -> str:
-    watermarks = [
-        "ӡeobfuѕсateԅ by Lеakӡ | discord.gg/qteAQmfJmP",
-        "DеoЬfuѕсаtеԅ by Leаκӡ | discord.gg/qteAQmfJmP"
-    ]
+    """
+    Xóa TẤT CẢ dòng chứa watermark của Leak3.
+    Dùng URL cố định để bắt chính xác, không phụ thuộc Unicode homoglyphs.
+    """
     lines = code.splitlines()
     cleaned = []
+    removed_count = 0
     
-    for line in lines:
-        skip = False
-        for wm in watermarks:
-            if wm in line:
-                skip = True
-                break
-        if not skip:
-            cleaned.append(line)
+    # URL cố định trong cả 2 watermark
+    leak_url = "discord.gg/qteAQmfJmP"
     
+    for i, line in enumerate(lines):
+        # Nếu dòng chứa URL của Leak3 → xóa
+        if leak_url in line:
+            removed_count += 1
+            print(f"🗑️ Đã xóa dòng {i+1}: {line.strip()[:80]}...")
+            continue
+        
+        # Dự phòng: xóa dòng có chứa từ khóa obfuscate + discord link pattern
+        if re.search(r'discord\.gg/\w+', line, re.IGNORECASE) and (
+            'obfu' in line.lower() or 'leak' in line.lower()
+        ):
+            removed_count += 1
+            print(f"🗑️ Đã xóa dòng {i+1} (regex): {line.strip()[:80]}...")
+            continue
+            
+        cleaned.append(line)
+    
+    print(f"📊 Đã xóa {removed_count} dòng watermark")
     return "\n".join(cleaned).strip()
 
 # ==================== BOT ====================
@@ -110,7 +124,7 @@ async def promdeobf(interaction: discord.Interaction, file: discord.Attachment):
                 await interaction.followup.send("❌ Không nhận được code từ API!", ephemeral=True)
                 return
             
-            # ⭐ XÓA CẢ 2 WATERMARK
+            # ⭐ XÓA WATERMARK
             clean_code = remove_watermarks(raw_code)
             if not clean_code:
                 await interaction.followup.send("❌ File rỗng sau khi xử lý!", ephemeral=True)
@@ -121,7 +135,7 @@ async def promdeobf(interaction: discord.Interaction, file: discord.Attachment):
             if not output_name.endswith('.lua'):
                 output_name += '.lua'
             
-            # ⭐ GỬI KẾT QUẢ: chỉ Success + tên file + file đính kèm
+            # ⭐ GỬI KẾT QUẢ
             file_obj = discord.File(
                 io.BytesIO(clean_code.encode('utf-8')),
                 filename=output_name
