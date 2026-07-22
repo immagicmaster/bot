@@ -15,6 +15,9 @@ API_URL = "https://leakd.up.railway.app/prometheus"
 PORT = int(os.environ.get("PORT", 10000))
 GUILD_ID = os.environ.get("GUILD_ID")
 
+# ⭐ ROLE ID ĐƯỢC PHÉP SỬ DỤNG LỆNH
+ALLOWED_ROLE_ID = 1528772521753837781
+
 # ==================== WEB SERVER ====================
 async def handle(request):
     return web.Response(text="🤖 Bot is alive!")
@@ -87,10 +90,23 @@ async def on_ready():
     print(f"🤖 Bot online: {bot.user} (ID: {bot.user.id})")
     print(f"👑 Owner ID: {OWNER_ID}")
 
+# ⭐ HÀM KIỂM TRA QUYỀN: Owner hoặc có Role ID cụ thể
+def is_owner_or_allowed_role(interaction: discord.Interaction) -> bool:
+    # Cho phép Owner
+    if interaction.user.id == OWNER_ID:
+        return True
+    
+    # Cho phép member có role ID cụ thể (chỉ check trong server)
+    if isinstance(interaction.user, discord.Member):
+        if any(role.id == ALLOWED_ROLE_ID for role in interaction.user.roles):
+            return True
+    
+    return False
+
 # ==================== /promdeobf ====================
-@app_commands.check(lambda i: i.user.id == OWNER_ID)
-@app_commands.command(name="promdeobf", description="Deobfuscate Prometheus Lua script")
-@app_commands.describe(file="File Lua script cần deobfuscate")
+@app_commands.check(is_owner_or_allowed_role)
+@app_commands.command(name="promdeobf", description="Deobfuscate Prometheus Lua Script File")
+@app_commands.describe(file="File .lua Hoặc .txt cần Deobfuscate")
 async def promdeobf(interaction: discord.Interaction, file: discord.Attachment):
     await interaction.response.defer(thinking=True)
     
@@ -153,9 +169,15 @@ async def promdeobf(interaction: discord.Interaction, file: discord.Attachment):
 @promdeobf.error
 async def promdeobf_error(interaction: discord.Interaction, error):
     if isinstance(error, app_commands.CheckFailure):
-        await interaction.response.send_message("🚫 Chỉ owner mới dùng được lệnh này!", ephemeral=True)
+        await interaction.response.send_message(
+            "🚫 Bạn không có quyền sử dụng lệnh này! Chỉ Owner hoặc người có role <@&1528772521753837781> mới được dùng.",
+            ephemeral=True
+        )
     else:
-        await interaction.response.send_message(f"❌ Lỗi: `{error}`", ephemeral=True)
+        if interaction.response.is_done():
+            await interaction.followup.send(f"❌ Lỗi: `{error}`", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"❌ Lỗi: `{error}`", ephemeral=True)
 
 # ==================== CHẠY ====================
 async def main():
