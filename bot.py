@@ -12,6 +12,7 @@ import re
 DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
 OWNER_ID = int(os.environ["OWNER_ID"])
 API_URL = "https://leakd.up.railway.app/prometheus"
+MSEC_API_URL = "https://leakd.up.railway.app/moonsec"
 WAD_API_URL = "https://wearedevs.net/api/obfuscate"
 PORT = int(os.environ.get("PORT", 10000))
 GUILD_ID = os.environ.get("GUILD_ID")
@@ -33,7 +34,7 @@ async def start_web_server():
     await site.start()
     print(f"🌐 Web server chạy trên port {PORT}")
 
-# ==================== XÓA WATERMARK PROMETHEUS ====================
+# ==================== XÓA WATERMARK ====================
 def remove_watermarks(code: str) -> str:
     lines = code.splitlines()
     cleaned = []
@@ -60,10 +61,6 @@ def remove_watermarks(code: str) -> str:
 
 # ==================== XÓA HEADER WAD ====================
 def clean_wad_header(code: str) -> str:
-    """
-    Xóa URL trong header comment của WeAreDevs Obfuscator.
-    --[[ v1.0.0 https://wearedevs.net/obfuscator ]] → --[[ v1.0.0 ]]
-    """
     cleaned = re.sub(
         r'(--\[\[.*?)\s+https?://[^\]]+(\s*\]\])',
         r'\1\2',
@@ -83,6 +80,7 @@ async def setup_hook():
     bot.session = aiohttp.ClientSession()
     bot.tree.add_command(promdeobf)
     bot.tree.add_command(wadobf)
+    bot.tree.add_command(msecdeobf)
     
     if GUILD_ID:
         guild_obj = discord.Object(id=int(GUILD_ID))
@@ -196,14 +194,12 @@ async def wadobf(interaction: discord.Interaction, file: discord.Attachment):
         return
     
     try:
-        # Đọc nội dung file dạng text
         file_bytes = await file.read()
         try:
             script_content = file_bytes.decode('utf-8')
         except UnicodeDecodeError:
             script_content = file_bytes.decode('latin-1')
         
-        # Gửi đến WeAreDevs API
         form_data = aiohttp.FormData()
         form_data.add_field('script', script_content)
         
@@ -225,10 +221,8 @@ async def wadobf(interaction: discord.Interaction, file: discord.Attachment):
                 await interaction.followup.send("❌ Không nhận được code từ WAD API!", ephemeral=True)
                 return
             
-            # ⭐ XÓA URL TRONG HEADER: --[[ v1.0.0 https://wearedevs.net/obfuscator ]] → --[[ v1.0.0 ]]
             clean_code = clean_wad_header(raw_obf)
             
-            # Tên file output
             output_name = file.filename.replace('.lua', '_obf.lua')
             if not output_name.endswith('.lua'):
                 output_name += '.lua'
@@ -249,6 +243,81 @@ async def wadobf(interaction: discord.Interaction, file: discord.Attachment):
 
 @wadobf.error
 async def wadobf_error(interaction: discord.Interaction, error):
+    if isinstance(error, app_commands.CheckFailure):
+        await interaction.response.send_message(
+            "🚫 Bạn không có quyền sử dụng lệnh này! Chỉ Owner hoặc người có role <@&1528772521753837781> mới được dùng.",
+            ephemeral=True
+        )
+    else:
+        if interaction.response.is_done():
+            await interaction.followup.send(f"❌ Lỗi: `{error}`", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"❌ Lỗi: `{error}`", ephemeral=True)
+
+# ==================== /msecdeobf ====================
+@app_commands.check(is_owner_or_allowed_role)
+@app_commands.command(name="msecdeobf", description="Deobfuscate Moonsec v3 Lua Script File")
+@app_commands.describe(file="File .lua Hoặc .txt cần Deobfuscate")
+async def msecdeobf(interaction: discord.Interaction, file: discord.Attachment):
+    await interaction.response.defer(thinking=True)
+    
+    if not file.filename.endswith(('.lua', '.txt')):
+        await interaction.followup.send("⚠️ Chỉ chấp nhận file `.lua` hoặc `.txt`!", ephemeral=True)
+        return
+    
+    if file.size > 5 * 1024 * 1024:
+        await interaction.followup.send("⚠️ File quá lớn! Giới hạn 5MB.", ephemeral=True)
+        return
+    
+    try:
+        file_bytes = await file.read()
+        
+        form_data = aiohttp.FormData()
+        form_data.add_field('file', file_bytes, filename=file.filename, content_type='application/octet-stream')
+        
+        async with bot.session.post(MSEC_API_URL, data=form_data) as response:
+            if response.status != 200:
+                await interaction.followup.send(f"❌ API lỗi HTTP {response.status}", ephemeral=True)
+                return
+            
+            data = await response.json()
+            
+            if not data.get("success", False):
+                error_msg = data.get("error", "Không rõ lỗi")
+                await interaction.followup.send(f"❌ API báo lỗi: {error_msg}", ephemeral=True)
+                return
+            
+            raw_code = data.get("deobfuscated_code", "")
+            if not raw_code:
+                await interaction.followup.send("❌ Không nhận được code từ API!", ephemeral=True)
+                return
+            
+            # ⭐ XÓA WATERMARK GIỐNG PROMDEOBF
+            clean_code = remove_watermarks(raw_code)
+            if not clean_code:
+                await interaction.followup.send("❌ File rỗng sau khi xử lý!", ephemeral=True)
+                return
+            
+            output_name = file.filename.replace('.lua', '_deobf.lua')
+            if not output_name.endswith('.lua'):
+                output_name += '.lua'
+            
+            file_obj = discord.File(
+                io.BytesIO(clean_code.encode('utf-8')),
+                filename=output_name
+            )
+            
+            await interaction.followup.send(
+                f"✅ Deobfuscated Success\n📝 `{output_name}`",
+                file=file_obj
+            )
+    
+    except Exception as e:
+        print(f"❌ Lỗi msecdeobf: {e}")
+        await interaction.followup.send(f"❌ Lỗi: `{e}`", ephemeral=True)
+
+@msecdeobf.error
+async def msecdeobf_error(interaction: discord.Interaction, error):
     if isinstance(error, app_commands.CheckFailure):
         await interaction.response.send_message(
             "🚫 Bạn không có quyền sử dụng lệnh này! Chỉ Owner hoặc người có role <@&1528772521753837781> mới được dùng.",
