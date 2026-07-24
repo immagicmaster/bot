@@ -2,19 +2,21 @@ import discord
 import os
 import aiohttp
 import json
+import asyncio
+from aiohttp import web
 from discord.ext import commands
 from dotenv import load_dotenv
 
-# Load biến môi trường từ file .env (chạy local)
-# Trên Render bạn set biến môi trường trực tiếp
+# Load .env khi chạy local
 load_dotenv()
 
 # ========== CẤU HÌNH ==========
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+PORT = int(os.getenv("PORT", 8080))  # Render cung cấp biến PORT
 
-# Các câu hỏi đặc biệt (hỗ trợ tiếng Việt & tiếng Anh, không phân biệt hoa thường)
+# Các câu hỏi đặc biệt (hỗ trợ tiếng Việt & tiếng Anh)
 SPECIAL_RESPONSES = {
     # Tiếng Việt
     "bạn tạo bởi ai": "Tôi Là AI Tạo Bởi Magic_Master",
@@ -25,6 +27,7 @@ SPECIAL_RESPONSES = {
     "bạn làm được gì": "Tôi Có Tác Dụng Giải Đáp Câu Hỏi Bạn",
     "chức năng của bạn": "Tôi Có Tác Dụng Giải Đáp Câu Hỏi Bạn",
     "bạn dùng để làm gì": "Tôi Có Tác Dụng Giải Đáp Câu Hỏi Bạn",
+    "bạn là ai": "Tôi Là AI Tạo Bởi Magic_Master",
 
     # Tiếng Anh
     "who created you": "I am an AI created by Magic_Master",
@@ -33,12 +36,14 @@ SPECIAL_RESPONSES = {
     "what can you do": "I am here to answer your questions",
     "what is your purpose": "I am here to answer your questions",
     "what do you do": "I am here to answer your questions",
+    "who are you": "I am an AI created by Magic_Master",
 }
 
 # ========== BOT SETUP ==========
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
+intents.presences = True
 
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
@@ -72,7 +77,6 @@ async def call_gemini(prompt: str) -> str:
 
             data = await resp.json()
 
-            # Trích xuất text từ response
             try:
                 candidates = data.get("candidates", [])
                 if candidates:
@@ -86,14 +90,16 @@ async def call_gemini(prompt: str) -> str:
 
 
 def check_special_question(text: str) -> str | None:
-    """Kiểm tra câu hỏi đặc biệt (không phân biệt hoa thường, bỏ dấu câu thừa)."""
+    """Kiểm tra câu hỏi đặc biệt (không phân biệt hoa thường)."""
     cleaned = text.lower().strip().rstrip("?.!,:;")
     return SPECIAL_RESPONSES.get(cleaned)
 
 
+# ========== DISCORD EVENTS ==========
+
 @bot.event
 async def on_ready():
-    print(f"✅ Bot đã online với tên: {bot.user}")
+    print(f"✅ Bot đã online: {bot.user}")
     print(f"🤖 ID: {bot.user.id}")
     print(f"🔗 Đang hoạt động trên {len(bot.guilds)} server")
     await bot.change_presence(
@@ -106,40 +112,32 @@ async def on_ready():
 
 @bot.event
 async def on_message(message: discord.Message):
-    # Bỏ qua tin nhắn của chính bot
     if message.author == bot.user:
         return
 
-    # Xử lý prefix commands trước
     await bot.process_commands(message)
 
-    # Nếu bot được mention hoặc reply, trả lờ
     bot_mentioned = bot.user.mentioned_in(message)
-    is_reply = message.reference and message.reference.resolved
-    if is_reply and message.reference.resolved:
+    is_reply = False
+    if message.reference and message.reference.resolved:
         is_reply = message.reference.resolved.author == bot.user
 
     if bot_mentioned or is_reply:
-        # Lấy nội dung tin nhắn (bỏ mention)
         content = message.content.replace(f"<@{bot.user.id}>", "").replace(f"<@!{bot.user.id}>", "").strip()
 
         if not content:
             await message.reply("👋 Xin chào! Bạn cần mình giúp gì? Hãy đặt câu hỏi nhé!")
             return
 
-        # Kiểm tra câu hỏi đặc biệt
         special = check_special_question(content)
         if special:
             await message.reply(special)
             return
 
-        # Gọi Gemini
         async with message.channel.typing():
             response = await call_gemini(content)
 
-        # Discord giới hạn 2000 ký tự mỗi tin nhắn
         if len(response) > 2000:
-            # Chia thành nhiều tin nhắn
             chunks = [response[i:i+1900] for i in range(0, len(response), 1900)]
             first = True
             for chunk in chunks:
@@ -202,7 +200,8 @@ async def help_command(ctx: commands.Context):
         name="⌨️ Lệnh",
         value="`!ask <câu hỏi>` - Hỏi Gemini Flash\n"
               "`!chat <tin nhắn>` - Chat với bot\n"
-              "`!help` - Hiển thị trợ giúp này",
+              "`!help` - Hiển thị trợ giúp này\n"
+              "`!ping` - Kiểm tra độ trễ",
         inline=False
     )
     embed.add_field(
@@ -222,13 +221,55 @@ async def ping_command(ctx: commands.Context):
     await ctx.reply(f"🏓 Pong! Độ trễ: **{latency}ms**")
 
 
-# ========== CHẠY BOT ==========
-if __name__ == "__main__":
-    if not DISCORD_TOKEN:
-        print("❌ Thiếu DISCORD_TOKEN! Hãy set biến môi trường.")
-        exit(1)
-    if not GEMINI_API_KEY:
-        print("❌ Thiếu GEMINI_API_KEY! Hãy set biến môi trường.")
-        exit(1)
+# ========== HTTP SERVER (cho Render Web Service) ==========
 
-    bot.run(DISCORD_TOKEN)
+async def health_check(request):
+    """Endpoint kiểm tra trạng thái bot."""
+    status = {
+        "status": "online" if bot.is_ready() else "connecting",
+        "bot_user": str(bot.user) if bot.user else None,
+        "guilds": len(bot.guilds) if bot.is_ready() else 0,
+        "latency_ms": round(bot.latency * 1000, 2) if bot.is_ready() else None
+    }
+    return web.json_response(status)
+
+
+async def start_http_server():
+    """Khởi động HTTP server để Render không kill bot."""
+    app = web.Application()
+    app.router.add_get("/", health_check)
+    app.router.add_get("/health", health_check)
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
+    await site.start()
+    print(f"🌐 HTTP server đang chạy tại port {PORT}")
+
+
+# ========== MAIN ==========
+
+async def main():
+    # Kiểm tra biến môi trường
+    if not DISCORD_TOKEN:
+        print("❌ Thiếu DISCORD_TOKEN! Hãy set biến môi trường trên Render.")
+        return
+    if not GEMINI_API_KEY:
+        print("❌ Thiếu GEMINI_API_KEY! Hãy set biến môi trường trên Render.")
+        return
+
+    # Chạy cả HTTP server và Discord bot song song
+    await asyncio.gather(
+        start_http_server(),
+        bot.start(DISCORD_TOKEN)
+    )
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n🛑 Bot đã dừng bởi ngườ dùng.")
+    except Exception as e:
+        print(f"\n❌ Lỗi nghiêm trọng: {e}")
+        raise
