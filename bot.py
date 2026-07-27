@@ -9,15 +9,22 @@ import asyncio
 import re
 
 # ==================== CẤU HÌNH ====================
+# ⭐ BẮT BUỘC từ biến môi trường — KHÔNG có giá trị mặc định trong code
 DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
 OWNER_ID = int(os.environ["OWNER_ID"])
-API_URL = "https://leakd.up.railway.app/prometheus"
-MSEC_API_URL = "https://leakd.up.railway.app/moonsec"
+
+# ⭐ API URLs — BẮT BUỘC từ biến môi trường (ẩn hoàn toàn, không lộ trong code)
+PROM_API_URL = os.environ["PROM_API_URL"]
+MSEC_API_URL = os.environ["MSEC_API_URL"]
+GOOFY_API_URL = os.environ["GOOFY_API_URL"]
+
+# WAD hardcode trong code (không dùng biến môi trường)
 WAD_API_URL = "https://wearedevs.net/api/obfuscate"
+
 PORT = int(os.environ.get("PORT", 10000))
 GUILD_ID = os.environ.get("GUILD_ID")
 
-# ⭐ ROLE ID ĐƯỢC PHÉP SỬ DỤNG LỆNH
+# ⭐ ROLE ID ĐƯỢC PHÉP SỬ DỤNG LỆNH (trừ /obf)
 ALLOWED_ROLE_ID = 1528772521753837781
 
 # ==================== WEB SERVER ====================
@@ -34,7 +41,6 @@ async def start_web_server():
     await site.start()
     print(f"🌐 Web server chạy trên port {PORT}")
 
-# ==================== XÓA WATERMARK ====================
 def remove_watermarks(code: str) -> str:
     lines = code.splitlines()
     cleaned = []
@@ -69,7 +75,18 @@ def clean_wad_header(code: str) -> str:
     )
     return cleaned
 
-# ==================== BOT ====================
+def clean_goofy_header(code: str) -> str:
+    lines = code.splitlines()
+    cleaned = []
+    
+    for line in lines:
+        if re.search(r'goofyscator.*\.lua\.cz', line, re.IGNORECASE):
+            print(f"🗑️ Đã xóa Goofy header: {line.strip()[:80]}...")
+            continue
+        cleaned.append(line)
+    
+    return "\n".join(cleaned).strip()
+
 intents = discord.Intents.default()
 intents.message_content = True
 
@@ -81,6 +98,7 @@ async def setup_hook():
     bot.tree.add_command(promdeobf)
     bot.tree.add_command(wadobf)
     bot.tree.add_command(msecdeobf)
+    bot.tree.add_command(obf)
     
     if GUILD_ID:
         guild_obj = discord.Object(id=int(GUILD_ID))
@@ -96,7 +114,7 @@ async def on_ready():
     print(f"🤖 Bot online: {bot.user} (ID: {bot.user.id})")
     print(f"👑 Owner ID: {OWNER_ID}")
 
-# ⭐ HÀM KIỂM TRA QUYỀN
+# ⭐ CHECK: Owner hoặc Role
 def is_owner_or_allowed_role(interaction: discord.Interaction) -> bool:
     if interaction.user.id == OWNER_ID:
         return True
@@ -105,7 +123,10 @@ def is_owner_or_allowed_role(interaction: discord.Interaction) -> bool:
             return True
     return False
 
-# ==================== /promdeobf ====================
+# ⭐ CHECK: Chỉ Owner
+def is_owner_only(interaction: discord.Interaction) -> bool:
+    return interaction.user.id == OWNER_ID
+
 @app_commands.check(is_owner_or_allowed_role)
 @app_commands.command(name="promdeobf", description="Deobfuscate Prometheus Lua Script File")
 @app_commands.describe(file="File .lua Hoặc .txt cần Deobfuscate")
@@ -126,7 +147,7 @@ async def promdeobf(interaction: discord.Interaction, file: discord.Attachment):
         form_data = aiohttp.FormData()
         form_data.add_field('file', file_bytes, filename=file.filename, content_type='application/octet-stream')
         
-        async with bot.session.post(API_URL, data=form_data) as response:
+        async with bot.session.post(PROM_API_URL, data=form_data) as response:
             if response.status != 200:
                 await interaction.followup.send(f"❌ API lỗi HTTP {response.status}", ephemeral=True)
                 return
@@ -162,7 +183,7 @@ async def promdeobf(interaction: discord.Interaction, file: discord.Attachment):
             )
     
     except Exception as e:
-        print(f"❌ Lỗi: {e}")
+        print(f"❌ Lỗi promdeobf: {e}")
         await interaction.followup.send(f"❌ Lỗi: `{e}`", ephemeral=True)
 
 @promdeobf.error
@@ -178,7 +199,6 @@ async def promdeobf_error(interaction: discord.Interaction, error):
         else:
             await interaction.response.send_message(f"❌ Lỗi: `{error}`", ephemeral=True)
 
-# ==================== /wadobf ====================
 @app_commands.check(is_owner_or_allowed_role)
 @app_commands.command(name="wadobf", description="Obfuscate Lua script bằng WeAreDevs API")
 @app_commands.describe(file="File .lua hoặc .txt cần Obfuscate")
@@ -292,7 +312,6 @@ async def msecdeobf(interaction: discord.Interaction, file: discord.Attachment):
                 await interaction.followup.send("❌ Không nhận được code từ API!", ephemeral=True)
                 return
             
-            # ⭐ XÓA WATERMARK GIỐNG PROMDEOBF
             clean_code = remove_watermarks(raw_code)
             if not clean_code:
                 await interaction.followup.send("❌ File rỗng sau khi xử lý!", ephemeral=True)
@@ -329,7 +348,82 @@ async def msecdeobf_error(interaction: discord.Interaction, error):
         else:
             await interaction.response.send_message(f"❌ Lỗi: `{error}`", ephemeral=True)
 
-# ==================== CHẠY ====================
+# ==================== /obf (CHỈ OWNER) ====================
+@app_commands.check(is_owner_only)
+@app_commands.command(name="obf", description="Obfuscate Lua script bằng Goofyscator API (Chỉ Owner)")
+@app_commands.describe(file="File .lua hoặc .txt cần Obfuscate")
+async def obf(interaction: discord.Interaction, file: discord.Attachment):
+    await interaction.response.defer(thinking=True)
+    
+    if not file.filename.endswith(('.lua', '.txt')):
+        await interaction.followup.send("⚠️ Chỉ chấp nhận file `.lua` hoặc `.txt`!", ephemeral=True)
+        return
+    
+    if file.size > 5 * 1024 * 1024:
+        await interaction.followup.send("⚠️ File quá lớn! Giới hạn 5MB.", ephemeral=True)
+        return
+    
+    try:
+        file_bytes = await file.read()
+        try:
+            script_content = file_bytes.decode('utf-8')
+        except UnicodeDecodeError:
+            script_content = file_bytes.decode('latin-1')
+        
+        form_data = aiohttp.FormData()
+        form_data.add_field('script', script_content)
+        
+        async with bot.session.post(GOOFY_API_URL, data=form_data) as response:
+            if response.status != 200:
+                text = await response.text()
+                print(f"❌ Goof API {response.status}: {text[:300]}")
+                await interaction.followup.send(f"❌ API lỗi HTTP {response.status}", ephemeral=True)
+                return
+            
+            data = await response.json()
+            
+            if data.get("status") != "success":
+                await interaction.followup.send(f"❌ API báo lỗi: {data.get('result', 'Không rõ')}", ephemeral=True)
+                return
+            
+            raw_obf = data.get("result", "")
+            if not raw_obf:
+                await interaction.followup.send("❌ Không nhận được code từ API!", ephemeral=True)
+                return
+            
+            clean_code = clean_goofy_header(raw_obf)
+            
+            output_name = file.filename.replace('.lua', '_obf.lua')
+            if not output_name.endswith('.lua'):
+                output_name += '.lua'
+            
+            file_obj = discord.File(
+                io.BytesIO(clean_code.encode('utf-8')),
+                filename=output_name
+            )
+            
+            await interaction.followup.send(
+                f"✅ Obfuscated Success\n📝 `{output_name}`",
+                file=file_obj
+            )
+    
+    except Exception as e:
+        print(f"❌ Lỗi obf: {e}")
+        await interaction.followup.send(f"❌ Lỗi: `{e}`", ephemeral=True)
+
+@obf.error
+async def obf_error(interaction: discord.Interaction, error):
+    if isinstance(error, app_commands.CheckFailure):
+        await interaction.response.send_message(
+            "🚫 Lệnh này chỉ dành cho Owner!",
+            ephemeral=True
+        )
+    else:
+        if interaction.response.is_done():
+            await interaction.followup.send(f"❌ Lỗi: `{error}`", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"❌ Lỗi: `{error}`", ephemeral=True)
+
 async def main():
     await start_web_server()
     await bot.start(DISCORD_TOKEN)
