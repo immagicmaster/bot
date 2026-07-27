@@ -10,8 +10,6 @@ import re
 
 DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
 OWNER_ID = int(os.environ["OWNER_ID"])
-
-# ⭐ API URL ẨN TRÊN RENDER (biến môi trường)
 API_URL = os.environ["API_URL"]
 MSEC_API_URL = os.environ["MSEC_API_URL"]
 WAD_API_URL = os.environ["WAD_API_URL"]
@@ -19,7 +17,6 @@ WAD_API_URL = os.environ["WAD_API_URL"]
 PORT = int(os.environ.get("PORT", 10000))
 GUILD_ID = os.environ.get("GUILD_ID")
 
-# ⭐ ROLE ID ĐƯỢC PHÉP SỬ DỤNG LỆNH
 ALLOWED_ROLE_ID = 1528772521753837781
 
 async def handle(request):
