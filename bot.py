@@ -20,7 +20,7 @@ WAD_API_URL = os.environ["WAD_API_URL"]
 
 # ⭐ MOONVEIL API
 MOONVEIL_API_KEY = os.environ["MOONVEIL_API_KEY"]
-MOONVEIL_API_URL = os.environ.get("MOONVEIL_API_URL", "https://moonveil.cc/api/obfuscate")
+MOONVEIL_API_URL = os.environ["MOONVEIL_API_URL"]
 
 PORT = int(os.environ.get("PORT", 10000))
 GUILD_ID = os.environ.get("GUILD_ID")
@@ -361,6 +361,8 @@ async def msecdeobf_error(interaction: discord.Interaction, error):
         else:
             await interaction.response.send_message(f"❌ Lỗi: `{error}`", ephemeral=True)
 
+import json  # Thêm ở đầu file nếu chưa có
+
 # ==================== /moonveil ====================
 @app_commands.check(is_owner_or_allowed_role)
 @app_commands.command(name="moonveil", description="Obfuscate Lua script bằng Moonveil API")
@@ -387,7 +389,6 @@ async def moonveil(interaction: discord.Interaction, file: discord.Attachment):
         await interaction.followup.send("⚠️ Chỉ chấp nhận file `.lua` hoặc `.txt`!", ephemeral=True)
         return
 
-    # Giới hạn 8MB
     if file.size > 8 * 1024 * 1024:
         await interaction.followup.send("⚠️ File quá lớn! Giới hạn **8MB**.", ephemeral=True)
         return
@@ -415,17 +416,26 @@ async def moonveil(interaction: discord.Interaction, file: discord.Attachment):
             "Content-Type": "application/json"
         }
 
+        # ⭐ DEBUG: In ra log để kiểm tra
+        print(f"🔍 [MOONVEIL] API URL: {MOONVEIL_API_URL}")
+        print(f"🔍 [MOONVEIL] Script length: {len(script)} chars")
+
         # --- Gọi API ---
         async with bot.session.post(
             MOONVEIL_API_URL,
-            json=payload,
+            data=json.dumps(payload),  # ⭐ Dùng data + json.dumps thay vì json=
             headers=headers,
             timeout=aiohttp.ClientTimeout(total=60)
         ) as resp:
+            
+            print(f"🔍 [MOONVEIL] Response status: {resp.status}")
+            print(f"🔍 [MOONVEIL] Response headers: {dict(resp.headers)}")
 
             if resp.status != 200:
                 err_body = await resp.text()
                 err_snip = err_body[:1500] if len(err_body) > 1500 else err_body
+                print(f"🔍 [MOONVEIL] Error body: {err_snip[:200]}...")
+                
                 await interaction.followup.send(
                     f"❌ API trả về lỗi **`{resp.status}`**:\n```\n{err_snip}\n```",
                     ephemeral=True
@@ -442,7 +452,6 @@ async def moonveil(interaction: discord.Interaction, file: discord.Attachment):
         buffer = io.BytesIO(obfuscated.encode("utf-8"))
         out_name = f"obfuscated_{file.filename}"
 
-        # Cập nhật cooldown
         moonveil_cooldowns[user_id] = time.time()
 
         await interaction.followup.send(
@@ -451,9 +460,10 @@ async def moonveil(interaction: discord.Interaction, file: discord.Attachment):
         )
 
     except aiohttp.ClientError as e:
+        print(f"❌ Lỗi kết nối Moonveil: {e}")
         await interaction.followup.send(f"❌ Lỗi kết nối đến API: `{e}`", ephemeral=True)
     except Exception as e:
-        print(f"❌ Lỗi moonveil: {e}")
+        print(f"❌ Lỗi Moonveil: {e}")
         await interaction.followup.send(f"❌ Lỗi không xác định: `{e}`", ephemeral=True)
 
 @moonveil.error
@@ -468,6 +478,7 @@ async def moonveil_error(interaction: discord.Interaction, error):
             await interaction.followup.send(f"❌ Lỗi: `{error}`", ephemeral=True)
         else:
             await interaction.response.send_message(f"❌ Lỗi: `{error}`", ephemeral=True)
+
 
 # ==================== CHẠY ====================
 async def main():
