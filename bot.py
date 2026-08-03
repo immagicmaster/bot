@@ -12,39 +12,34 @@ import shutil
 import tempfile
 
 # ==================== THƯ VIỆN LUA/LUAU ====================
-# Thử import lupa (Python Lua bindings)
 try:
     import lupa
     from lupa import LuaRuntime
     LUPA_AVAILABLE = True
 except ImportError:
     LUPA_AVAILABLE = False
-    print("⚠️ Thư viện 'lupa' chưa được cài đặt. Một số tính năng Lua có thể bị hạn chế.")
+    print("⚠️ Thư viện 'lupa' chưa được cài đặt.")
 
-# Kiểm tra lune CLI có sẵn không
 LUNE_AVAILABLE = shutil.which("lune") is not None
 if LUNE_AVAILABLE:
     print("✅ Lune CLI đã sẵn sàng")
 else:
-    print("⚠️ Lune CLI không tìm thấy trong PATH. Vui lòng cài đặt: cargo install lune")
+    print("⚠️ Lune CLI không tìm thấy trong PATH.")
 
 # ==================== CẤU HÌNH ====================
 DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
 OWNER_ID = int(os.environ["OWNER_ID"])
 
-# ⭐ API URL ẨN TRÊN RENDER (biến môi trường)
 API_URL = os.environ["API_URL"]
 MSEC_API_URL = os.environ["MSEC_API_URL"]
 WAD_API_URL = os.environ["WAD_API_URL"]
 
 PORT = int(os.environ.get("PORT", 10000))
 GUILD_ID = os.environ.get("GUILD_ID")
-
-# ⭐ ROLE ID ĐƯỢC PHÉP SỬ DỤNG LỆNH
 ALLOWED_ROLE_ID = 1528772521753837781
 
-# ⭐ ĐƯỜNG DẪN MFire.luau
-MFIRE_PATH = "/Env/MFire.luau"
+# ✅ ĐƯỜNG DẪN ĐÚNG: lấy thư mục chứa bot.py, rồi vào Env/MFire.luau
+MFIRE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Env", "MFire.luau")
 
 # ==================== WEB SERVER ====================
 async def handle(request):
@@ -123,10 +118,10 @@ async def on_ready():
     print(f"🤖 Bot online: {bot.user} (ID: {bot.user.id})")
     print(f"👑 Owner ID: {OWNER_ID}")
     print(f"📁 MFire path: {MFIRE_PATH}")
+    print(f"📁 MFire tồn tại: {os.path.exists(MFIRE_PATH)}")
     print(f"🔧 Lune available: {LUNE_AVAILABLE}")
     print(f"🔧 Lupa available: {LUPA_AVAILABLE}")
 
-# ⭐ HÀM KIỂM TRA QUYỀN
 def is_owner_or_allowed_role(interaction: discord.Interaction) -> bool:
     if interaction.user.id == OWNER_ID:
         return True
@@ -325,7 +320,6 @@ async def msecdeobf(interaction: discord.Interaction, file: discord.Attachment):
                 await interaction.followup.send("❌ Không nhận được code từ API!", ephemeral=True)
                 return
             
-            # ⭐ XÓA WATERMARK GIỐNG PROMDEOBF
             clean_code = remove_watermarks(raw_code)
             if not clean_code:
                 await interaction.followup.send("❌ File rỗng sau khi xử lý!", ephemeral=True)
@@ -364,15 +358,14 @@ async def msecdeobf_error(interaction: discord.Interaction, error):
 
 # ==================== /logger (OWNER ONLY) ====================
 @app_commands.check(is_owner_only)
-@app_commands.command(name="logger", description="[OWNER ONLY] Thực thi MFire.luau với file đính kèm")
+@app_commands.command(name="logger", description="[OWNER ONLY] Using the MFire.luau Logger API")
 @app_commands.describe(
-    file="File .lua hoặc .txt để xử lý bằng MFire",
+    file="File .lua hoặc .txt xử lý bằng API MFire",
     args="Tham số bổ sung truyền vào (tùy chọn)"
 )
 async def logger_cmd(interaction: discord.Interaction, file: discord.Attachment, args: str = ""):
     await interaction.response.defer(thinking=True)
     
-    # Kiểm tra file
     if not file.filename.endswith(('.lua', '.txt', '.luau')):
         await interaction.followup.send("⚠️ Chỉ chấp nhận file `.lua`, `.luau` hoặc `.txt`!", ephemeral=True)
         return
@@ -383,33 +376,43 @@ async def logger_cmd(interaction: discord.Interaction, file: discord.Attachment,
     
     # Kiểm tra MFire.luau tồn tại
     if not os.path.exists(MFIRE_PATH):
+        # Log thêm thông tin debug
+        cwd = os.getcwd()
+        files = []
+        try:
+            for root, dirs, filenames in os.walk(cwd):
+                for f in filenames:
+                    files.append(os.path.join(root, f))
+        except Exception:
+            pass
+        
+        print(f"❌ Không tìm thấy MFire tại: {MFIRE_PATH}")
+        print(f"📁 CWD hiện tại: {cwd}")
+        print(f"📁 Các file trong CWD: {os.listdir(cwd) if os.path.exists(cwd) else 'N/A'}")
+        
         await interaction.followup.send(
-            f"❌ Không tìm thấy `{MFIRE_PATH}` trên server!\n"
-            f"📁 Vui lòng đảm bảo file MFire.luau đã được đặt đúng đường dẫn.",
+            f"❌ Không tìm thấy `{MFIRE_PATH}`!\n"
+            f"📁 Thư mục hiện tại: `{cwd}`\n"
+            f"📂 Nội dung thư mục gốc: `{', '.join(os.listdir(cwd))}`",
             ephemeral=True
         )
         return
     
     try:
-        # Đọc file người dùng gửi
         user_file_bytes = await file.read()
         try:
             user_code = user_file_bytes.decode('utf-8')
         except UnicodeDecodeError:
             user_code = user_file_bytes.decode('latin-1')
         
-        # Tạo thư mục tạm để xử lý
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Lưu file người dùng vào thư mục tạm
             user_file_path = os.path.join(tmpdir, file.filename)
             with open(user_file_path, 'w', encoding='utf-8') as f:
                 f.write(user_code)
             
-            # Đọc source MFire.luau
             with open(MFIRE_PATH, 'r', encoding='utf-8') as f:
                 mfire_source = f.read()
             
-            # Copy MFire.luau vào thư mục tạm để xử lý (tránh ghi đè file gốc)
             mfire_tmp_path = os.path.join(tmpdir, "MFire.luau")
             with open(mfire_tmp_path, 'w', encoding='utf-8') as f:
                 f.write(mfire_source)
@@ -421,22 +424,17 @@ async def logger_cmd(interaction: discord.Interaction, file: discord.Attachment,
             if LUNE_AVAILABLE:
                 execution_method = "lune"
                 
-                # Chuẩn bị command: lune run MFire.luau [args] [user_file]
                 cmd = ["lune", "run", mfire_tmp_path]
                 
-                # Thêm args nếu có
                 if args.strip():
                     cmd.extend(args.strip().split())
                 
-                # Truyền đường dẫn file người dùng như tham số cuối
                 cmd.append(user_file_path)
                 
-                # Thiết lập environment để MFire có thể truy cập đường dẫn file
                 env = os.environ.copy()
                 env["INPUT_FILE"] = user_file_path
                 env["OUTPUT_DIR"] = tmpdir
                 
-                # Chạy lune
                 process = await asyncio.create_subprocess_exec(
                     *cmd,
                     stdout=asyncio.subprocess.PIPE,
@@ -454,33 +452,26 @@ async def logger_cmd(interaction: discord.Interaction, file: discord.Attachment,
                     )
                     return
                 
-                # Lấy output
                 result_output = stdout.decode('utf-8', errors='replace')
                 
-                # Kiểm tra xem MFire có tạo file output không
                 output_file = os.path.join(tmpdir, "output.lua")
                 if os.path.exists(output_file):
                     with open(output_file, 'r', encoding='utf-8') as f:
                         result_code = f.read()
                 else:
-                    # Nếu không có file output, dùng stdout làm kết quả
                     result_code = result_output
             
-            # ==================== FALLBACK 2: LUPA (Python Lua) ====================
+            # ==================== FALLBACK 2: LUPA ====================
             elif LUPA_AVAILABLE:
                 execution_method = "lupa"
                 
                 lua = LuaRuntime(unpack_returned_tuples=True)
-                
-                # Thiết lập globals để script có thể truy cập file người dùng
                 lua.globals().INPUT_FILE = user_file_path
                 lua.globals().INPUT_CODE = user_code
                 lua.globals().OUTPUT_DIR = tmpdir
                 
-                # Thực thi MFire source
                 result = lua.execute(mfire_source)
                 
-                # Kiểm tra output file
                 output_file = os.path.join(tmpdir, "output.lua")
                 if os.path.exists(output_file):
                     with open(output_file, 'r', encoding='utf-8') as f:
@@ -490,7 +481,6 @@ async def logger_cmd(interaction: discord.Interaction, file: discord.Attachment,
                 else:
                     result_code = str(result) if result else ""
             
-            # ==================== FALLBACK 3: KHÔNG CÓ THƯ VIỆN ====================
             else:
                 await interaction.followup.send(
                     "❌ Không có runtime Lua/Luau nào khả dụng!\n"
@@ -501,7 +491,6 @@ async def logger_cmd(interaction: discord.Interaction, file: discord.Attachment,
                 )
                 return
             
-            # Kiểm tra kết quả
             if not result_code or not result_code.strip():
                 await interaction.followup.send(
                     "⚠️ Thực thi thành công nhưng không có output!\n"
@@ -510,17 +499,14 @@ async def logger_cmd(interaction: discord.Interaction, file: discord.Attachment,
                 )
                 return
             
-            # Tạo tên file output
             base_name = file.filename.rsplit('.', 1)[0]
             output_name = f"{base_name}_logged.lua"
             
-            # Tạo file Discord
             file_obj = discord.File(
                 io.BytesIO(result_code.encode('utf-8')),
                 filename=output_name
             )
             
-            # Gửi kết quả
             embed = discord.Embed(
                 title="✅ Logger Executed",
                 color=0x00ff00
