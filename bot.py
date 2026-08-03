@@ -395,7 +395,7 @@ async def logger_cmd(interaction: discord.Interaction, file: discord.Attachment,
             "1. Đặt binary `lune` cùng thư mục với `bot.py`\n"
             "2. Hoặc set biến môi trường: `LUNE_PATH=/đường/dẫn/tới/lune`\n"
             "3. Hoặc thêm vào Build Command trên Render:\n"
-            "```bash\ncurl -L -o lune https://github.com/lune-org/lune/releases/download/v0.8.6/lune-0.8.6-linux-x86_64 && chmod +x lune\n```",
+            "```bash\ncurl -L -o lune.zip https://github.com/lune-org/lune/releases/download/v0.8.6/lune-0.8.6-linux-x86_64.zip && unzip -o lune.zip && chmod +x lune && rm -f lune.zip\n```",
             ephemeral=True
         )
         return
@@ -429,34 +429,6 @@ async def logger_cmd(interaction: discord.Interaction, file: discord.Attachment,
             mfire_tmp_path = os.path.join(tmpdir, "MFire.luau")
             shutil.copy2(MFIRE_PATH, mfire_tmp_path)
             
-            # ✅ TEST LUNE TRƯỚC KHI CHẠY MFIRE
-            test_script = os.path.join(tmpdir, "test.luau")
-            with open(test_script, 'w', encoding='utf-8') as f:
-                f.write('print("Lune OK")')
-            
-            test_env = os.environ.copy()
-            test_env["RUST_BACKTRACE"] = "1"
-            
-            test_proc = await asyncio.create_subprocess_exec(
-                LUNE_PATH, "run", test_script,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=test_env
-            )
-            test_out, test_err = await asyncio.wait_for(test_proc.communicate(), timeout=10.0)
-            
-            if test_proc.returncode != 0:
-                test_err_text = test_err.decode('utf-8', errors='replace')
-                await interaction.followup.send(
-                    f"❌ Lune crash ngay cả với script đơn giản!\n"
-                    f"Đây là bug Lune trên môi trường này. Hãy thử version khác (v0.8.6).\n"
-                    f"```\n{test_err_text[:1500]}\n```",
-                    ephemeral=True
-                )
-                return
-            
-            print(f"✅ Lune test OK: {test_out.decode().strip()}")
-            
             # Chuẩn bị command Lune
             cmd = [LUNE_PATH, "run", mfire_tmp_path]
             
@@ -469,9 +441,10 @@ async def logger_cmd(interaction: discord.Interaction, file: discord.Attachment,
                     return
                 cmd.extend(arg_list)
             
+            # Truyền file user làm arg cuối
             cmd.append(user_file_path)
             
-            # ✅ FIX: KHÔNG đưa nội dung file vào env! Chỉ truyền đường dẫn
+            # ✅ KHÔNG đưa nội dung file vào env! Chỉ truyền đường dẫn
             env = os.environ.copy()
             env["INPUT_FILE"] = user_file_path
             env["OUTPUT_DIR"] = tmpdir
