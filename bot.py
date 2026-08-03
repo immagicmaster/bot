@@ -10,33 +10,21 @@ import re
 import shutil
 import tempfile
 
-# ==================== THƯ VIỆN ====================
-# Lupa v2.3.0 vẫn được giữ trong requirements.txt nếu bạn cần cho tính năng khác,
-# nhưng lệnh /logger CHỈ DÙNG LUNE (MFire.luau cần @lune/fs).
-try:
-    import lupa
-    LUPA_AVAILABLE = True
-except ImportError:
-    LUPA_AVAILABLE = False
-
 # ==================== TÌM LUNE CLI ====================
 def find_lune_binary():
     """Tìm lune binary ở nhiều vị trí khác nhau"""
-    # 1. Biến môi trường tùy chỉnh
     env_path = os.environ.get("LUNE_PATH")
     if env_path and os.path.isfile(env_path) and os.access(env_path, os.X_OK):
         return os.path.abspath(env_path)
     
-    # 2. PATH hệ thống
     path_which = shutil.which("lune")
     if path_which:
         return os.path.abspath(path_which)
     
-    # 3. Các đường dẫn phổ biến trên Render/Linux
     base_dir = os.path.dirname(os.path.abspath(__file__))
     candidates = [
-        os.path.join(base_dir, "lune"),              # ./lune (cùng thư mục bot.py)
-        os.path.join(base_dir, "bin", "lune"),       # ./bin/lune
+        os.path.join(base_dir, "lune"),
+        os.path.join(base_dir, "bin", "lune"),
         "/usr/local/bin/lune",
         "/usr/bin/lune",
         "/opt/render/.cargo/bin/lune",
@@ -65,7 +53,6 @@ PORT = int(os.environ.get("PORT", 10000))
 GUILD_ID = os.environ.get("GUILD_ID")
 ALLOWED_ROLE_ID = 1528772521753837781
 
-# ✅ Đường dẫn tương đối từ thư mục chứa bot.py
 MFIRE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Env", "MFire.luau")
 
 # ==================== WEB SERVER ====================
@@ -148,7 +135,6 @@ async def on_ready():
     print(f"📁 MFire tồn tại: {os.path.exists(MFIRE_PATH)}")
     print(f"🔧 Lune path: {LUNE_PATH}")
     print(f"🔧 Lune available: {LUNE_AVAILABLE}")
-    print(f"🔧 Lupa available: {LUPA_AVAILABLE} (KHÔNG dùng cho /logger)")
 
 def is_owner_or_allowed_role(interaction: discord.Interaction) -> bool:
     if interaction.user.id == OWNER_ID:
@@ -386,9 +372,9 @@ async def msecdeobf_error(interaction: discord.Interaction, error):
 
 # ==================== /logger (OWNER ONLY - CHỈ LUNE) ====================
 @app_commands.check(is_owner_only)
-@app_commands.command(name="logger", description="[OWNER ONLY] Dùng API MFire")
+@app_commands.command(name="logger", description="[OWNER ONLY] Use MFireAPI")
 @app_commands.describe(
-    file="File .lua hoặc .txt để xử lý bằng MFireAPI",
+    file="File .lua hoặc .txt xử lý bằng MFireAPI",
     args="Tham số bổ sung truyền vào (tùy chọn)"
 )
 async def logger_cmd(interaction: discord.Interaction, file: discord.Attachment, args: str = ""):
@@ -402,7 +388,6 @@ async def logger_cmd(interaction: discord.Interaction, file: discord.Attachment,
         await interaction.followup.send("⚠️ File quá lớn! Giới hạn 5MB.", ephemeral=True)
         return
     
-    # ✅ ĐIỀU KIỆN: CHỈ CHẠY KHI CÓ LUNE
     if not LUNE_AVAILABLE:
         await interaction.followup.send(
             "❌ **Lune CLI không tìm thấy!**\n\n"
@@ -416,7 +401,6 @@ async def logger_cmd(interaction: discord.Interaction, file: discord.Attachment,
         )
         return
     
-    # Kiểm tra MFire.luau tồn tại
     if not os.path.exists(MFIRE_PATH):
         cwd = os.getcwd()
         files = []
@@ -424,10 +408,6 @@ async def logger_cmd(interaction: discord.Interaction, file: discord.Attachment,
             files = os.listdir(cwd)
         except Exception:
             pass
-        
-        print(f"❌ Không tìm thấy MFire tại: {MFIRE_PATH}")
-        print(f"📁 CWD: {cwd}")
-        print(f"📂 Files: {files}")
         
         await interaction.followup.send(
             f"❌ Không tìm thấy `{MFIRE_PATH}`!\n"
@@ -439,41 +419,43 @@ async def logger_cmd(interaction: discord.Interaction, file: discord.Attachment,
     
     try:
         user_file_bytes = await file.read()
-        try:
-            user_code = user_file_bytes.decode('utf-8')
-        except UnicodeDecodeError:
-            user_code = user_file_bytes.decode('latin-1')
         
         with tempfile.TemporaryDirectory() as tmpdir:
             # Lưu file người dùng
             user_file_path = os.path.join(tmpdir, file.filename)
-            with open(user_file_path, 'w', encoding='utf-8') as f:
-                f.write(user_code)
+            with open(user_file_path, 'wb') as f:
+                f.write(user_file_bytes)
             
             # Copy MFire.luau vào tmp
-            with open(MFIRE_PATH, 'r', encoding='utf-8') as f:
-                mfire_source = f.read()
-            
             mfire_tmp_path = os.path.join(tmpdir, "MFire.luau")
-            with open(mfire_tmp_path, 'w', encoding='utf-8') as f:
-                f.write(mfire_source)
+            shutil.copy2(MFIRE_PATH, mfire_tmp_path)
             
             # Chuẩn bị command Lune
             cmd = [LUNE_PATH, "run", mfire_tmp_path]
             
+            # Xử lý args - giới hạn tối đa 10 args để tránh E2BIG
             if args.strip():
-                cmd.extend(args.strip().split())
+                arg_list = args.strip().split()
+                if len(arg_list) > 10:
+                    await interaction.followup.send(
+                        "⚠️ Quá nhiều arguments! Tối đa 10.", ephemeral=True
+                    )
+                    return
+                cmd.extend(arg_list)
             
+            # Truyền file user làm arg cuối
             cmd.append(user_file_path)
             
-            # Environment cho MFire
+            # ✅ FIX: KHÔNG đưa nội dung file vào env!
+            # Chỉ truyền đường dẫn, MFire sẽ tự đọc file
             env = os.environ.copy()
             env["INPUT_FILE"] = user_file_path
-            env["INPUT_CODE"] = user_code
             env["OUTPUT_DIR"] = tmpdir
+            # KHÔNG có env["INPUT_CODE"] nữa
             
             print(f"🚀 Chạy: {' '.join(cmd)}")
             print(f"📁 INPUT_FILE={user_file_path}")
+            print(f"📁 OUTPUT_DIR={tmpdir}")
             
             process = await asyncio.create_subprocess_exec(
                 *cmd,
