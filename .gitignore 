@@ -6,3 +6,9 @@ __pycache__/
 .Python
 venv/
 .env.local
+git rm lune
+echo "lune" >> .gitignore
+echo "*.tar.gz" >> .gitignore
+git add .gitignore
+git commit -m "remove wrong lune binary, add gitignore"
+git push
