@@ -8,7 +8,8 @@ venv/
 .env.local
 git rm lune
 echo "lune" >> .gitignore
+echo "lune.zip" >> .gitignore
 echo "*.tar.gz" >> .gitignore
 git add .gitignore
-git commit -m "remove wrong lune binary, add gitignore"
+git commit -m "remove wrong lune binary"
 git push
