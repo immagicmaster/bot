@@ -11,8 +11,8 @@ import shutil
 import tempfile
 
 # ==================== THƯ VIỆN ====================
-# Lupa vẫn được giữ trong requirements.txt (v2.3.0) nếu bạn cần cho tính năng khác,
-# nhưng lệnh /logger KHÔNG DÙNG lupa nữa vì MFire.luau cần @lune/fs.
+# Lupa v2.3.0 vẫn được giữ trong requirements.txt nếu bạn cần cho tính năng khác,
+# nhưng lệnh /logger CHỈ DÙNG LUNE (MFire.luau cần @lune/fs).
 try:
     import lupa
     LUPA_AVAILABLE = True
@@ -35,7 +35,7 @@ def find_lune_binary():
     # 3. Các đường dẫn phổ biến trên Render/Linux
     base_dir = os.path.dirname(os.path.abspath(__file__))
     candidates = [
-        os.path.join(base_dir, "lune"),              # ./lune
+        os.path.join(base_dir, "lune"),              # ./lune (cùng thư mục bot.py)
         os.path.join(base_dir, "bin", "lune"),       # ./bin/lune
         "/usr/local/bin/lune",
         "/usr/bin/lune",
@@ -386,9 +386,9 @@ async def msecdeobf_error(interaction: discord.Interaction, error):
 
 # ==================== /logger (OWNER ONLY - CHỈ LUNE) ====================
 @app_commands.check(is_owner_only)
-@app_commands.command(name="logger", description="[OWNER ONLY] Thực thi MFire.luau với file đính kèm")
+@app_commands.command(name="logger", description="[OWNER ONLY] Dùng API MFire")
 @app_commands.describe(
-    file="File .lua hoặc .txt để xử lý bằng MFire",
+    file="File .lua hoặc .txt để xử lý bằng MFireAPI",
     args="Tham số bổ sung truyền vào (tùy chọn)"
 )
 async def logger_cmd(interaction: discord.Interaction, file: discord.Attachment, args: str = ""):
@@ -411,7 +411,7 @@ async def logger_cmd(interaction: discord.Interaction, file: discord.Attachment,
             "1. Đặt binary `lune` cùng thư mục với `bot.py`\n"
             "2. Hoặc set biến môi trường: `LUNE_PATH=/đường/dẫn/tới/lune`\n"
             "3. Hoặc thêm vào Build Command trên Render:\n"
-            "```bash\ncurl -L -o lune https://github.com/lune-org/lune/releases/download/v0.8.9/lune-0.8.9-linux-x86_64 && chmod +x lune\n```",
+            "```bash\ncurl -s https://api.github.com/repos/lune-org/lune/releases/latest | grep -o 'https://github.com/lune-org/lune/releases/download/[^\"]*linux-x86_64[^\"]*' | head -1 | xargs -I {} curl -L -o lune {} && chmod +x lune\n```",
             ephemeral=True
         )
         return
