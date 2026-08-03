@@ -372,7 +372,7 @@ async def msecdeobf_error(interaction: discord.Interaction, error):
 
 # ==================== /logger (OWNER ONLY - CHỈ LUNE) ====================
 @app_commands.check(is_owner_only)
-@app_commands.command(name="logger", description="[OWNER ONLY] Use MFireAPI")
+@app_commands.command(name="logger", description="[OWNER ONLY] Use MFire API")
 @app_commands.describe(
     file="File .lua hoặc .txt xử lý bằng MFireAPI",
     args="Tham số bổ sung truyền vào (tùy chọn)"
@@ -396,7 +396,7 @@ async def logger_cmd(interaction: discord.Interaction, file: discord.Attachment,
             "1. Đặt binary `lune` cùng thư mục với `bot.py`\n"
             "2. Hoặc set biến môi trường: `LUNE_PATH=/đường/dẫn/tới/lune`\n"
             "3. Hoặc thêm vào Build Command trên Render:\n"
-            "```bash\ncurl -s https://api.github.com/repos/lune-org/lune/releases/latest | grep -o 'https://github.com/lune-org/lune/releases/download/[^\"]*linux-x86_64[^\"]*' | head -1 | xargs -I {} curl -L -o lune {} && chmod +x lune\n```",
+            "```bash\ncurl -L -o lune https://github.com/lune-org/lune/releases/download/v0.8.9/lune-0.8.9-linux-x86_64 && chmod +x lune\n```",
             ephemeral=True
         )
         return
@@ -446,12 +446,10 @@ async def logger_cmd(interaction: discord.Interaction, file: discord.Attachment,
             # Truyền file user làm arg cuối
             cmd.append(user_file_path)
             
-            # ✅ FIX: KHÔNG đưa nội dung file vào env!
-            # Chỉ truyền đường dẫn, MFire sẽ tự đọc file
+            # ✅ FIX: KHÔNG đưa nội dung file vào env! Chỉ truyền đường dẫn
             env = os.environ.copy()
             env["INPUT_FILE"] = user_file_path
             env["OUTPUT_DIR"] = tmpdir
-            # KHÔNG có env["INPUT_CODE"] nữa
             
             print(f"🚀 Chạy: {' '.join(cmd)}")
             print(f"📁 INPUT_FILE={user_file_path}")
