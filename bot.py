@@ -7,12 +7,12 @@ import os
 import io
 import asyncio
 import re
+from datetime import datetime
 
 # ==================== CẤU HÌNH ====================
 DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
 OWNER_ID = int(os.environ["OWNER_ID"])
 
-# ⭐ API URL ẨN TRÊN RENDER (biến môi trường)
 API_URL = os.environ["API_URL"]
 MSEC_API_URL = os.environ["MSEC_API_URL"]
 WAD_API_URL = os.environ["WAD_API_URL"]
@@ -20,7 +20,6 @@ WAD_API_URL = os.environ["WAD_API_URL"]
 PORT = int(os.environ.get("PORT", 10000))
 GUILD_ID = os.environ.get("GUILD_ID")
 
-# ⭐ ROLE ID ĐƯỢC PHÉP SỬ DỤNG LỆNH
 ALLOWED_ROLE_ID = 1528772521753837781
 
 # ==================== WEB SERVER ====================
@@ -72,6 +71,33 @@ def clean_wad_header(code: str) -> str:
     )
     return cleaned
 
+# ==================== HÀM TẠO EMBED ====================
+def create_result_embed(obfuscator_name: str, clean_code: str, is_obfuscation: bool = False) -> discord.Embed:
+    size_bytes = len(clean_code.encode('utf-8'))
+    size_kb = size_bytes / 1024
+    
+    now = datetime.now()
+    date_str = now.strftime("%d/%m/%Y")
+    time_str = now.strftime("%H:%M")
+    
+    if is_obfuscation:
+        title = "<:verify:1534952434890182707> **Obfuscation successful**"
+        obf_icon = "<:wad:1534952520345194658>"
+    else:
+        title = "<:verify:1534952434890182707> **Deobfuscation successful!**"
+        obf_icon = "<:Code:1534952344414847077>"
+    
+    embed = discord.Embed(
+        description=f"{title}\n\n"
+                    f"{obf_icon} **Obfuscator:** {obfuscator_name}\n"
+                    f"<:Code:1534952344414847077> **Size:** `{size_kb:.2f} KB`",
+        color=discord.Color.purple()
+    )
+    
+    embed.set_footer(text=f"MagicDumper • {date_str} | Hôm nay lúc {time_str}")
+    
+    return embed
+
 # ==================== BOT ====================
 intents = discord.Intents.default()
 intents.message_content = True
@@ -99,7 +125,7 @@ async def on_ready():
     print(f"🤖 Bot online: {bot.user} (ID: {bot.user.id})")
     print(f"👑 Owner ID: {OWNER_ID}")
 
-# ⭐ HÀM KIỂM TRA QUYỀN
+# ==================== KIỂM TRA QUYỀN ====================
 def is_owner_or_allowed_role(interaction: discord.Interaction) -> bool:
     if interaction.user.id == OWNER_ID:
         return True
@@ -111,7 +137,7 @@ def is_owner_or_allowed_role(interaction: discord.Interaction) -> bool:
 # ==================== /promdeobf ====================
 @app_commands.check(is_owner_or_allowed_role)
 @app_commands.command(name="promdeobf", description="Deobfuscate Prometheus Lua Script File")
-@app_commands.describe(file="File .lua Hoặc .txt cần Deobfuscate")
+@app_commands.describe(file="File .lua Or .txt Need Deobfuscate")
 async def promdeobf(interaction: discord.Interaction, file: discord.Attachment):
     await interaction.response.defer(thinking=True)
     
@@ -159,10 +185,9 @@ async def promdeobf(interaction: discord.Interaction, file: discord.Attachment):
                 filename=output_name
             )
             
-            await interaction.followup.send(
-                f"✅ Deobfuscated Success\n📝 `{output_name}`",
-                file=file_obj
-            )
+            embed = create_result_embed("Prometheus", clean_code, is_obfuscation=False)
+            
+            await interaction.followup.send(embed=embed, file=file_obj)
     
     except Exception as e:
         print(f"❌ Lỗi: {e}")
@@ -172,7 +197,7 @@ async def promdeobf(interaction: discord.Interaction, file: discord.Attachment):
 async def promdeobf_error(interaction: discord.Interaction, error):
     if isinstance(error, app_commands.CheckFailure):
         await interaction.response.send_message(
-            "🚫 Bạn không có quyền sử dụng lệnh này! Chỉ Owner hoặc người có role <@&1528772521753837781> mới được dùng.",
+            "🚫 You are not authorized to use it.",
             ephemeral=True
         )
     else:
@@ -181,10 +206,9 @@ async def promdeobf_error(interaction: discord.Interaction, error):
         else:
             await interaction.response.send_message(f"❌ Lỗi: `{error}`", ephemeral=True)
 
-# ==================== /wadobf ====================
 @app_commands.check(is_owner_or_allowed_role)
-@app_commands.command(name="wadobf", description="Obfuscate Lua script bằng WeAreDevs API")
-@app_commands.describe(file="File .lua hoặc .txt cần Obfuscate")
+@app_commands.command(name="wadobf", description="Obfuscated Lua Script Using WeAreDevs API")
+@app_commands.describe(file="File .lua Or .txt Need Obfuscate")
 async def wadobf(interaction: discord.Interaction, file: discord.Attachment):
     await interaction.response.defer(thinking=True)
     
@@ -235,10 +259,9 @@ async def wadobf(interaction: discord.Interaction, file: discord.Attachment):
                 filename=output_name
             )
             
-            await interaction.followup.send(
-                f"✅ Obfuscated Success\n📝 `{output_name}`",
-                file=file_obj
-            )
+            embed = create_result_embed("WeAreDev", clean_code, is_obfuscation=True)
+            
+            await interaction.followup.send(embed=embed, file=file_obj)
     
     except Exception as e:
         print(f"❌ Lỗi wadobf: {e}")
@@ -248,7 +271,7 @@ async def wadobf(interaction: discord.Interaction, file: discord.Attachment):
 async def wadobf_error(interaction: discord.Interaction, error):
     if isinstance(error, app_commands.CheckFailure):
         await interaction.response.send_message(
-            "🚫 Bạn không có quyền sử dụng lệnh này! Chỉ Owner hoặc người có role <@&1528772521753837781> mới được dùng.",
+            "🚫 You are not authorized to use it.",
             ephemeral=True
         )
     else:
@@ -260,12 +283,12 @@ async def wadobf_error(interaction: discord.Interaction, error):
 # ==================== /msecdeobf ====================
 @app_commands.check(is_owner_or_allowed_role)
 @app_commands.command(name="msecdeobf", description="Deobfuscate Moonsec v3 Lua Script File")
-@app_commands.describe(file="File .lua Hoặc .txt cần Deobfuscate")
+@app_commands.describe(file="File Only .lua Or .txt File Need Deobfuscate")
 async def msecdeobf(interaction: discord.Interaction, file: discord.Attachment):
     await interaction.response.defer(thinking=True)
     
     if not file.filename.endswith(('.lua', '.txt')):
-        await interaction.followup.send("⚠️ Chỉ chấp nhận file `.lua` hoặc `.txt`!", ephemeral=True)
+        await interaction.followup.send("⚠️ Only Work file `.lua` Or `.txt`!", ephemeral=True)
         return
     
     if file.size > 5 * 1024 * 1024:
@@ -295,7 +318,6 @@ async def msecdeobf(interaction: discord.Interaction, file: discord.Attachment):
                 await interaction.followup.send("❌ Không nhận được code từ API!", ephemeral=True)
                 return
             
-            # ⭐ XÓA WATERMARK GIỐNG PROMDEOBF
             clean_code = remove_watermarks(raw_code)
             if not clean_code:
                 await interaction.followup.send("❌ File rỗng sau khi xử lý!", ephemeral=True)
@@ -310,10 +332,9 @@ async def msecdeobf(interaction: discord.Interaction, file: discord.Attachment):
                 filename=output_name
             )
             
-            await interaction.followup.send(
-                f"✅ Deobfuscated Success\n📝 `{output_name}`",
-                file=file_obj
-            )
+            embed = create_result_embed("MoonSec", clean_code, is_obfuscation=False)
+            
+            await interaction.followup.send(embed=embed, file=file_obj)
     
     except Exception as e:
         print(f"❌ Lỗi msecdeobf: {e}")
@@ -323,16 +344,15 @@ async def msecdeobf(interaction: discord.Interaction, file: discord.Attachment):
 async def msecdeobf_error(interaction: discord.Interaction, error):
     if isinstance(error, app_commands.CheckFailure):
         await interaction.response.send_message(
-            "🚫 Bạn không có quyền sử dụng lệnh này! Chỉ Owner hoặc người có role <@&1528772521753837781> mới được dùng.",
+            "🚫 You are not authorized to use it.",
             ephemeral=True
         )
     else:
         if interaction.response.is_done():
-            await interaction.followup.send(f"❌ Lỗi: `{error}`", ephemeral=True)
+            await interaction.followup.send(f"❌  Error : `{error}`", ephemeral=True)
         else:
-            await interaction.response.send_message(f"❌ Lỗi: `{error}`", ephemeral=True)
+            await interaction.response.send_message(f"❌ Error : `{error}`", ephemeral=True)
 
-# ==================== CHẠY ====================
 async def main():
     await start_web_server()
     await bot.start(DISCORD_TOKEN)
