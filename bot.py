@@ -133,6 +133,121 @@ def is_owner_or_allowed_role(interaction: discord.Interaction) -> bool:
         if any(role.id == ALLOWED_ROLE_ID for role in interaction.user.roles):
             return True
     return False
+# ==================== /obf ====================
+@app_commands.check(is_owner_or_allowed_role)
+@app_commands.command(name="obf", description="Obfuscate Lua script với Hex hoặc Basic mode")
+@app_commands.describe(
+    mode="Chọn mode obfuscate",
+    file="File .lua hoặc .txt cần obfuscate",
+    code="Code Lua cần obfuscate (nếu không dùng file)"
+)
+@app_commands.choices(
+    mode=[
+        app_commands.Choice(name="Hex", value="Hex"),
+        app_commands.Choice(name="Basic", value="Basic")
+    ]
+)
+async def obf(interaction: discord.Interaction, 
+              mode: Optional[app_commands.Choice[str]] = None,
+              file: Optional[discord.Attachment] = None, 
+              code: Optional[str] = None):
+    await interaction.response.defer(thinking=True)
+    
+    # Kiểm tra mode
+    if mode is None:
+        embed = create_failure_embed("Please select a mode")
+        await interaction.followup.send(embed=embed)
+        return
+    
+    # Kiểm tra input
+    if file is None and code is None:
+        embed = create_failure_embed("Please provide a file or code")
+        await interaction.followup.send(embed=embed)
+        return
+    
+    script_content = ""
+    
+    # Ưu tiên file nếu có
+    if file is not None:
+        if not file.filename.endswith(('.lua', '.txt')):
+            await interaction.followup.send("⚠️ Chỉ chấp nhận file `.lua` hoặc `.txt`!", ephemeral=True)
+            return
+        
+        if file.size > 5 * 1024 * 1024:
+            await interaction.followup.send("⚠️ File quá lớn! Giới hạn 5MB.", ephemeral=True)
+            return
+        
+        file_bytes = await file.read()
+        try:
+            script_content = file_bytes.decode('utf-8')
+        except UnicodeDecodeError:
+            script_content = file_bytes.decode('latin-1')
+    else:
+        script_content = code
+    
+    if not script_content.strip():
+        embed = create_failure_embed("Code cannot be empty")
+        await interaction.followup.send(embed=embed)
+        return
+    
+    try:
+        payload = {
+            "action": "create_obf",
+            "api_token": "c77b02714b72f3b2b2d8ae412bdd0d0a",
+            "preset": mode.value,
+            "content": script_content,
+            "output": "console"
+        }
+        
+        async with bot.session.post("https://luacrack.site/", data=payload) as response:
+            if response.status != 200:
+                await interaction.followup.send(f"❌ API lỗi HTTP {response.status}", ephemeral=True)
+                return
+            
+            # Thử parse JSON, nếu không được thì lấy text
+            try:
+                data = await response.json()
+                if isinstance(data, dict):
+                    if data.get("success") is False:
+                        err = data.get("error", "Không rõ lỗi")
+                        await interaction.followup.send(f"❌ API báo lỗi: {err}", ephemeral=True)
+                        return
+                    # Nếu JSON có key "code" hoặc "obfuscated"
+                    obfuscated_code = data.get("code") or data.get("obfuscated") or data.get("content", "")
+                else:
+                    obfuscated_code = str(data)
+            except Exception:
+                obfuscated_code = await response.text()
+            
+            if not obfuscated_code:
+                await interaction.followup.send("❌ Không nhận được code từ API!", ephemeral=True)
+                return
+            
+            output_name = "obfuscated.lua"
+            file_obj = discord.File(
+                io.BytesIO(obfuscated_code.encode('utf-8')),
+                filename=output_name
+            )
+            
+            embed = create_success_embed("Obfuscation successful", mode.value, obfuscated_code)
+            await interaction.followup.send(embed=embed, file=file_obj)
+    
+    except Exception as e:
+        print(f"❌ Lỗi obf: {e}")
+        await interaction.followup.send(f"❌ Lỗi: `{e}`", ephemeral=True)
+
+@obf.error
+async def obf_error(interaction: discord.Interaction, error):
+    if isinstance(error, app_commands.CheckFailure):
+        await interaction.response.send_message(
+            "🚫 Bạn không có quyền sử dụng lệnh này! Chỉ Owner hoặc người có role <@&1528772521753837781> mới được dùng.",
+            ephemeral=True
+        )
+    else:
+        if interaction.response.is_done():
+            await interaction.followup.send(f"❌ Lỗi: `{error}`", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"❌ Lỗi: `{error}`", ephemeral=True)
 
 # ==================== /promdeobf ====================
 @app_commands.check(is_owner_or_allowed_role)
