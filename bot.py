@@ -202,10 +202,10 @@ def is_owner_or_allowed_role(interaction: discord.Interaction) -> bool:
 
 # ==================== /obf ====================
 @app_commands.check(is_owner_or_allowed_role)
-@app_commands.command(name="obf", description="Obfuscate Lua script với zlib + base32hex + VM option")
+@app_commands.command(name="obf", description="obfuscation by MFire + VM")
 @app_commands.describe(
     file="File .lua hoặc .txt cần Obfuscate",
-    vm="Bật VM wrapper (True/False), mặc định False"
+    vm="VM mode , Default : False"
 )
 async def obf(interaction: discord.Interaction, file: discord.Attachment, vm: bool = False):
     await interaction.response.defer(thinking=True)
