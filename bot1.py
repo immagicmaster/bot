@@ -1,6 +1,7 @@
 import os
 import asyncio
 import tempfile
+import traceback
 from pathlib import Path
 
 import discord
@@ -11,7 +12,6 @@ BASE_DIR = Path(__file__).resolve().parent
 
 ENV_DIR = BASE_DIR / "Env"
 ASPEACT_FILE = ENV_DIR / "Aspeact.luau"
-
 LUNE_FILE = BASE_DIR / ".lune" / "bin" / "lune"
 
 MAX_FILE_SIZE = 1024 * 1024
@@ -20,23 +20,48 @@ ALLOWED_EXTENSIONS = {".lua", ".txt"}
 TOKEN = os.getenv("DISCORD_TOKEN")
 
 
+print("=" * 60)
+print("Starting Discord Bot")
+print("=" * 60)
+
+
 if not TOKEN:
-    raise RuntimeError("DISCORD_TOKEN is not set")
-
-
-if not ASPEACT_FILE.is_file():
-    raise FileNotFoundError(
-        f"Không tìm thấy file: {ASPEACT_FILE}"
+    raise RuntimeError(
+        "DISCORD_TOKEN environment variable is missing"
     )
 
 
-if not LUNE_FILE.is_file():
+if not ASPEACT_FILE.exists():
     raise FileNotFoundError(
-        f"Không tìm thấy Lune: {LUNE_FILE}"
+        f"Missing file: {ASPEACT_FILE}"
     )
+
+
+if not LUNE_FILE.exists():
+    raise FileNotFoundError(
+        f"Missing Lune executable: {LUNE_FILE}"
+    )
+
+
+if not os.access(LUNE_FILE, os.X_OK):
+    try:
+        os.chmod(LUNE_FILE, 0o755)
+    except Exception as error:
+        raise RuntimeError(
+            f"Lune is not executable: {error}"
+        )
+
+
+print(f"Python: {os.sys.version}")
+print(f"Bot file: {BASE_DIR}")
+print(f"Aspeact: {ASPEACT_FILE}")
+print(f"Lune: {LUNE_FILE}")
+print("Token: configured")
+print("=" * 60)
 
 
 intents = discord.Intents.default()
+
 intents.message_content = True
 
 bot = commands.Bot(
@@ -46,6 +71,10 @@ bot = commands.Bot(
 
 
 async def run_aspeact(input_file: Path):
+    print(
+        f"Running Lune with: {input_file}"
+    )
+
     process = await asyncio.create_subprocess_exec(
         str(LUNE_FILE),
         "run",
@@ -75,16 +104,18 @@ async def run_aspeact(input_file: Path):
 
 
 async def execute_attachment(
-    ctx: commands.Context,
-    attachment: discord.Attachment
+    ctx,
+    attachment
 ):
-    filename = Path(attachment.filename)
+    filename = Path(
+        attachment.filename
+    )
 
     extension = filename.suffix.lower()
 
     if extension not in ALLOWED_EXTENSIONS:
         await ctx.send(
-            "❌ Chỉ cho phép file `.lua` hoặc `.txt`."
+            "❌ Chỉ cho phép `.lua` hoặc `.txt`."
         )
         return
 
@@ -108,23 +139,25 @@ async def execute_attachment(
         with tempfile.NamedTemporaryFile(
             suffix=extension,
             delete=False
-        ) as temp_file:
-            temp_path = Path(temp_file.name)
-            temp_file.write(data)
+        ) as temp:
+            temp_path = Path(temp.name)
+            temp.write(data)
 
         await ctx.send(
-            f"⏳ Đang thực thi `{attachment.filename}`..."
+            f"⏳ Executing `{attachment.filename}`..."
         )
 
-        returncode, stdout, stderr = await run_aspeact(
-            temp_path
+        returncode, stdout, stderr = (
+            await run_aspeact(temp_path)
         )
 
         if returncode == 0:
             result = stdout.strip()
 
             if not result:
-                result = "Aspeact.luau executed successfully."
+                result = (
+                    "Aspeact.luau executed successfully."
+                )
 
             if len(result) > 1900:
                 result = result[:1900] + "\n..."
@@ -140,29 +173,33 @@ async def execute_attachment(
                 result = stdout.strip()
 
             if not result:
-                result = "Lune returned an unknown error."
+                result = "Unknown Lune error."
 
             if len(result) > 1900:
                 result = result[:1900] + "\n..."
 
             await ctx.send(
-                f"❌ Lune Error - Exit Code `{returncode}`\n"
+                f"❌ Lune Error "
+                f"(Exit Code {returncode})\n"
                 f"```text\n{result}\n```"
             )
 
-    except asyncio.TimeoutError:
-        await ctx.send(
-            "❌ Thực thi quá thời gian cho phép."
+    except Exception as error:
+        print(
+            "Attachment execution error:"
         )
 
-    except Exception as error:
+        traceback.print_exc()
+
         error_text = str(error)
 
         if len(error_text) > 1900:
-            error_text = error_text[:1900] + "\n..."
+            error_text = (
+                error_text[:1900] + "\n..."
+            )
 
         await ctx.send(
-            f"❌ Python Error:\n"
+            f"❌ Error:\n"
             f"```text\n{error_text}\n```"
         )
 
@@ -177,83 +214,104 @@ async def execute_attachment(
 
 @bot.event
 async def on_ready():
-    print("=" * 50)
-    print("Discord Bot Started")
-    print(f"Bot: {bot.user}")
-    print(f"Aspeact: {ASPEACT_FILE}")
-    print(f"Lune: {LUNE_FILE}")
-    print("=" * 50)
+    print("=" * 60)
+    print("BOT LOGIN SUCCESS")
+    print(f"Username: {bot.user}")
+    print(f"User ID: {bot.user.id}")
+    print(
+        f"Guilds: {len(bot.guilds)}"
+    )
+    print("=" * 60)
+
+
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        return
+
+    await bot.process_commands(message)
 
 
 @bot.command(name="l")
-async def lune_command(ctx: commands.Context):
+async def lune_command(ctx):
     if not ctx.message.attachments:
         await ctx.send(
-            "❌ Cách dùng:\n"
-            "`.l` + file `.lua` hoặc `.txt`\n"
-            "Giới hạn: 1 MB"
+            "❌ Upload `.lua` hoặc `.txt` "
+            "cùng với `.l`."
         )
         return
 
-    attachment = ctx.message.attachments[0]
-
     await execute_attachment(
         ctx,
-        attachment
+        ctx.message.attachments[0]
     )
 
 
 @bot.command(name="dump")
-async def dump_command(ctx: commands.Context):
+async def dump_command(ctx):
     if not ctx.message.attachments:
         await ctx.send(
-            "❌ Cách dùng:\n"
-            "`.dump` + file `.lua` hoặc `.txt`\n"
-            "Giới hạn: 1 MB"
+            "❌ Upload `.lua` hoặc `.txt` "
+            "cùng với `.dump`."
         )
         return
 
-    attachment = ctx.message.attachments[0]
-
     await execute_attachment(
         ctx,
-        attachment
+        ctx.message.attachments[0]
     )
 
 
 @bot.event
 async def on_command_error(
-    ctx: commands.Context,
+    ctx,
     error
 ):
+    print(
+        f"Command error: {repr(error)}"
+    )
+
     if isinstance(
         error,
         commands.CommandNotFound
     ):
         return
 
-    if isinstance(
-        error,
-        commands.MissingRequiredArgument
-    ):
-        await ctx.send(
-            "❌ Thiếu tham số."
-        )
-        return
-
-    if isinstance(
-        error,
-        commands.CheckFailure
-    ):
-        await ctx.send(
-            "❌ Bạn không có quyền sử dụng command này."
-        )
-        return
-
-    print(
-        f"Command error: {error}"
+    await ctx.send(
+        f"❌ Command error:\n"
+        f"```text\n{str(error)[:1800]}\n```"
     )
 
 
+async def start_bot():
+    try:
+        print("Connecting to Discord...")
+        await bot.start(TOKEN)
+
+    except Exception:
+        print("=" * 60)
+        print("DISCORD LOGIN ERROR")
+        print("=" * 60)
+
+        traceback.print_exc()
+
+        raise
+
+
 if __name__ == "__main__":
-    bot.run(TOKEN)
+    try:
+        asyncio.run(
+            start_bot()
+        )
+
+    except KeyboardInterrupt:
+        print("Bot stopped.")
+
+    except Exception:
+        print("=" * 60)
+        print("FATAL ERROR")
+        print("=" * 60)
+
+        traceback.print_exc()
+
+        raise
