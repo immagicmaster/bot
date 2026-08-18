@@ -285,33 +285,41 @@ async def on_command_error(
 
 async def start_bot():
     try:
-        print("Connecting to Discord...")
+        print("========================================")
+        print("STARTING BOT")
+        print("========================================")
+
         await bot.start(TOKEN)
 
-    except Exception:
-        print("=" * 60)
-        print("DISCORD LOGIN ERROR")
-        print("=" * 60)
+    except BaseException as error:
+        print("========================================")
+        print("BOT CRASHED")
+        print("========================================")
+        print("ERROR TYPE:", type(error).__name__)
+        print("ERROR:", repr(error))
 
+        import traceback
         traceback.print_exc()
+
+        print("========================================")
 
         raise
 
 
 if __name__ == "__main__":
     try:
-        asyncio.run(
-            start_bot()
-        )
+        asyncio.run(start_bot())
 
-    except KeyboardInterrupt:
-        print("Bot stopped.")
-
-    except Exception:
-        print("=" * 60)
+    except BaseException as error:
+        print("========================================")
         print("FATAL ERROR")
-        print("=" * 60)
+        print("========================================")
+        print("TYPE:", type(error).__name__)
+        print("ERROR:", repr(error))
 
+        import traceback
         traceback.print_exc()
+
+        print("========================================")
 
         raise
