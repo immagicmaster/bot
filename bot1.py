@@ -33,11 +33,20 @@ bot = commands.Bot(
 
 
 async def run_aspeact(input_file: Path):
+    LUNE_PATH = BASE_DIR / ".lune" / "bin" / "lune"
+
+if not LUNE_PATH.exists():
+    raise FileNotFoundError(
+        f"Lune executable not found: {LUNE_PATH}"
+    )
     process = await asyncio.create_subprocess_exec(
-        "lune",
-        "run",
-        str(ASPEACT),
-        str(input_file),
+    str(LUNE_PATH),
+    "run",
+    str(ASPEACT),
+    str(input_file),
+    stdout=asyncio.subprocess.PIPE,
+    stderr=asyncio.subprocess.PIPE
+)
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE
     )
