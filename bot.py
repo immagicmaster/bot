@@ -34,34 +34,68 @@ async def start_web_server():
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
-    print(f"🌐 Web server chạy trên port {PORT}")
+    # ==================== XÓA WATERMARK ====================
+# Bảng chuyển ký tự Cyrillic/Greek trông giống Latin -> Latin thật
+# (để detect watermark gõ bằng chữ giả như "Thіs", "Wаs", "Deobfuѕcatеd", "LeaκD")
+HOMOGLYPH_MAP = str.maketrans({
+    'а': 'a', 'А': 'A',   # а cyrillic
+    'е': 'e', 'Е': 'E',   # е cyrillic
+    'і': 'i', 'І': 'I',   # і cyrillic
+    'ѕ': 's', 'Ѕ': 'S',   # ѕ cyrillic
+    'о': 'o', 'О': 'O',   # о cyrillic
+    'р': 'p', 'Р': 'P',   # р cyrillic
+    'с': 'c', 'С': 'C',   # с cyrillic
+    'у': 'y', 'У': 'Y',   # у cyrillic
+    'х': 'x', 'Х': 'X',   # х cyrillic
+    'κ': 'k', 'ϰ': 'k',   # κ/ϰ greek -> k
+    'һ': 'h', 'ј': 'j', 'ǥ': 'g', 'ϲ': 'c',
+})
 
-# ==================== XÓA WATERMARK ====================
+def _normalize_line(line: str) -> str:
+    """Chuyển ký tự giả về Latin để so khớp."""
+    return line.translate(HOMOGLYPH_MAP)
+
 def remove_watermarks(code: str) -> str:
     lines = code.splitlines()
     cleaned = []
     removed_count = 0
     leak_url = "discord.gg/qteAQmfJmP"
-    
+
     for i, line in enumerate(lines):
+        norm = _normalize_line(line)   # bản đã chuẩn hóa ký tự để so khớp
+        stripped = line.strip()
+        is_comment_line = stripped.startswith('--')
+        removed = False
+
+        # 1. URL leak cũ (giữ nguyên behavior cũ)
         if leak_url in line:
-            removed_count += 1
-            print(f"🗑️ Đã xóa dòng {i+1}: {line.strip()[:80]}...")
-            continue
-        
-        if re.search(r'discord\.gg/\w+', line, re.IGNORECASE) and (
-            'obfu' in line.lower() or 'leak' in line.lower()
+            removed = True
+
+        # 2. URL leakd.vercel.app (mới) - ví dụ: -- https://leakd.vercel.app
+        elif re.search(r'leakd\.vercel\.app', norm, re.IGNORECASE):
+            removed = True
+
+        # 3. Dòng "This File Was Deobfuscated By LeakD" / "LeaκD" (mới)
+        #    Chỉ xóa nếu là dòng comment, tránh xóa nhầm code thật
+        elif is_comment_line and re.search(r'deobfuscat\w*\s+by\s+leakd', norm, re.IGNORECASE):
+            removed = True
+
+        # 4. Regex cũ: discord.gg/... kèm từ khóa obfu/leak
+        elif re.search(r'discord\.gg/\w+', norm, re.IGNORECASE) and (
+            'obfu' in norm.lower() or 'leak' in norm.lower()
         ):
+            removed = True
+
+        if removed:
             removed_count += 1
-            print(f"🗑️ Đã xóa dòng {i+1} (regex): {line.strip()[:80]}...")
+            print(f"🗑️ Đã xóa dòng {i+1}: {stripped[:80]}...")
             continue
-            
+
         cleaned.append(line)
-    
+
     print(f"📊 Đã xóa {removed_count} dòng watermark")
     return "\n".join(cleaned).strip()
 
-# ==================== XÓA HEADER WAD ====================
 def clean_wad_header(code: str) -> str:
     cleaned = re.sub(
         r'(--\[\[.*?)\s+https?://[^\]]+(\s*\]\])',
