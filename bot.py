@@ -38,7 +38,8 @@ async def start_web_server():
 
 # ==================== XÓA WATERMARK ====================
 # Bảng chuyển ký tự Cyrillic/Greek trông giống Latin -> Latin thật
-# (để detect watermark gõ bằng chữ giả như "Thіѕ", "Waѕ", "DеoЬfusсаted", "Ву", "LеaκD")
+# FIX QUAN TRỌNG: 'В' (Cyrillic) trông giống chữ B -> map sang 'B' (bản trước bị map sang 'V'
+# nên "By" thành "Vy", regex không bao giờ khớp). Bổ sung thêm 'ԁ' (U+0501) và các chữ "d" cyrillic.
 HOMOGLYPH_MAP = str.maketrans({
     'а': 'a', 'А': 'A',   # а cyrillic
     'е': 'e', 'Е': 'E',   # е cyrillic
@@ -51,13 +52,35 @@ HOMOGLYPH_MAP = str.maketrans({
     'х': 'x', 'Х': 'X',   # х cyrillic
     'κ': 'k', 'ϰ': 'k',   # κ/ϰ greek -> k
     'Ь': 'b', 'ь': 'b',   # Ь/ь cyrillic -> b
-    'В': 'V', 'в': 'v',   # В/в cyrillic -> v
-    'һ': 'h', 'ј': 'j', 'ǥ': 'g', 'ϲ': 'c',
+    'В': 'B', 'в': 'b',   # В/в cyrillic -> B/b (TRÔNG GIỐNG B, không phải V)
+    'Ԁ': 'd', 'ԁ': 'd', 'Ԃ': 'd', 'ԃ': 'd',  # các chữ "d" cyrillic
+    'һ': 'h', 'ј': 'j', 'ǥ': 'g', 'ϲ': 'c', 'Ϲ': 'C',
+    'Ο': 'O', 'ο': 'o',
 })
 
-def _normalize_line(line: str) -> str:
-    """Chuyển ký tự giả về Latin để so khớp."""
-    return line.translate(HOMOGLYPH_MAP)
+# Các ký tự ẩn / zero-width có thể chèn vào watermark
+INVISIBLE_CHARS = ('\u200b', '\u200c', '\u200d', '\ufeff', '\u2060', '\u00ad')
+
+# Danh sách câu watermark (đã chuẩn hóa: thường, 1 khoảng trắng, không ký tự giả)
+# Mọi biến thể chữ giả đều chuẩn hóa về đúng câu này -> so khớp NGUYÊN DÒNG
+WATERMARK_SENTENCES = {
+    "this file was deobfuscated by leakd",
+}
+
+def normalize_for_match(text: str) -> str:
+    """Chuẩn hóa: đổi ký tự giả -> Latin, xóa ký tự ẩn, gom khoảng trắng, viết thường."""
+    norm = text.translate(HOMOGLYPH_MAP)
+    for ch in INVISIBLE_CHARS:
+        norm = norm.replace(ch, '')
+    return re.sub(r'\s+', ' ', norm).strip().lower()
+
+def is_watermark_line(line: str) -> bool:
+    """Chỉ trả True nếu CẢ DÒNG là watermark. Dòng bình thường -> False (không xóa)."""
+    s = line.strip()
+    if not s.startswith('--'):          # không phải comment -> không phải watermark dạng này
+        return False
+    content = re.sub(r'^-+', '', s[2:]).strip()   # bỏ "--" (hoặc "---") ở đầu
+    return normalize_for_match(content) in WATERMARK_SENTENCES
 
 def remove_watermarks(code: str) -> str:
     lines = code.splitlines()
@@ -66,7 +89,6 @@ def remove_watermarks(code: str) -> str:
     leak_url = "discord.gg/qteAQmfJmP"
 
     for i, line in enumerate(lines):
-        norm = _normalize_line(line)   # bản đã chuẩn hóa ký tự để so khớp
         stripped = line.strip()
         removed = False
 
@@ -74,19 +96,18 @@ def remove_watermarks(code: str) -> str:
         if leak_url in line:
             removed = True
 
-        # 2. URL leakd.vercel.app (mới) - ví dụ: -- https://leakd.vercel.app
-        elif re.search(r'leakd\.vercel\.app', norm, re.IGNORECASE):
+        # 2. URL leakd.vercel.app (mới)
+        elif re.search(r'leakd\.vercel\.app', line, re.IGNORECASE):
             removed = True
 
-        # 3. "This File Was Deobfuscated By LeakD" - mọi biến thể chữ giả
-        #    (Thіѕ File Waѕ DеoЬfusсаted Ву LеaκD / This File Was Deobfuscated By LeakD...)
-        #    Quét toàn bộ file, xóa dòng bất kể nằm ở dòng nào
-        elif re.search(r'deobfuscat\w*\s+by\s+leak', norm, re.IGNORECASE):
+        # 3. Câu "This File Was Deobfuscated By LeakD" - LOGIC MỚI:
+        #    so khớp NGUYÊN DÒNG (đúng thì xóa, sai/không phải comment thì giữ)
+        elif is_watermark_line(line):
             removed = True
 
         # 4. Regex cũ: discord.gg/... kèm từ khóa obfu/leak
-        elif re.search(r'discord\.gg/\w+', norm, re.IGNORECASE) and (
-            'obfu' in norm.lower() or 'leak' in norm.lower()
+        elif re.search(r'discord\.gg/\w+', line, re.IGNORECASE) and (
+            'obfu' in line.lower() or 'leak' in line.lower()
         ):
             removed = True
 
@@ -99,6 +120,7 @@ def remove_watermarks(code: str) -> str:
 
     print(f"📊 Đã xóa {removed_count} dòng watermark")
     return "\n".join(cleaned).strip()
+
 
 # ==================== XÓA HEADER WAD ====================
 def clean_wad_header(code: str) -> str:
