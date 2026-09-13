@@ -36,7 +36,6 @@ async def start_web_server():
     await site.start()
     # ==================== XÓA WATERMARK ====================
 # Bảng chuyển ký tự Cyrillic/Greek trông giống Latin -> Latin thật
-# (để detect watermark gõ bằng chữ giả như "Thіs", "Wаs", "Deobfuѕcatеd", "LeaκD")
 HOMOGLYPH_MAP = str.maketrans({
     'а': 'a', 'А': 'A',   # а cyrillic
     'е': 'e', 'Е': 'E',   # е cyrillic
@@ -48,6 +47,8 @@ HOMOGLYPH_MAP = str.maketrans({
     'у': 'y', 'У': 'Y',   # у cyrillic
     'х': 'x', 'Х': 'X',   # х cyrillic
     'κ': 'k', 'ϰ': 'k',   # κ/ϰ greek -> k
+    'Ь': 'b', 'ь': 'b',   # Ь/ь cyrillic -> b
+    'В': 'V', 'в': 'v',   # В/в cyrillic -> v
     'һ': 'h', 'ј': 'j', 'ǥ': 'g', 'ϲ': 'c',
 })
 
@@ -64,20 +65,20 @@ def remove_watermarks(code: str) -> str:
     for i, line in enumerate(lines):
         norm = _normalize_line(line)   # bản đã chuẩn hóa ký tự để so khớp
         stripped = line.strip()
-        is_comment_line = stripped.startswith('--')
         removed = False
 
         # 1. URL leak cũ (giữ nguyên behavior cũ)
         if leak_url in line:
             removed = True
 
-        # 2. URL leakd.vercel.app (mới) - ví dụ: -- https://leakd.vercel.app
+        # 2. URL leakd.vercel.app (mới)
         elif re.search(r'leakd\.vercel\.app', norm, re.IGNORECASE):
             removed = True
 
-        # 3. Dòng "This File Was Deobfuscated By LeakD" / "LeaκD" (mới)
-        #    Chỉ xóa nếu là dòng comment, tránh xóa nhầm code thật
-        elif is_comment_line and re.search(r'deobfuscat\w*\s+by\s+leakd', norm, re.IGNORECASE):
+        # 3. "This File Was Deobfuscated By LeakD" - mọi biến thể chữ giả
+        #    Quét toàn bộ file, xóa dòng bất kể nằm ở dòng nào
+        #    Bắt: Deobfuscated / DеoЬfusсаted / Deobfuѕcatеd ... By LeakD / LеaκD ...
+        elif re.search(r'deobfuscat\w*\s+by\s+leak', norm, re.IGNORECASE):
             removed = True
 
         # 4. Regex cũ: discord.gg/... kèm từ khóa obfu/leak
@@ -93,8 +94,7 @@ def remove_watermarks(code: str) -> str:
 
         cleaned.append(line)
 
-    print(f"📊 Đã xóa {removed_count} dòng watermark")
-    return "\n".join(cleaned).strip()
+    
 
 def clean_wad_header(code: str) -> str:
     cleaned = re.sub(
