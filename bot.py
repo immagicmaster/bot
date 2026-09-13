@@ -34,8 +34,11 @@ async def start_web_server():
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
-    # ==================== XÓA WATERMARK ====================
+    print(f"🌐 Web server chạy trên port {PORT}")
+
+# ==================== XÓA WATERMARK ====================
 # Bảng chuyển ký tự Cyrillic/Greek trông giống Latin -> Latin thật
+# (để detect watermark gõ bằng chữ giả như "Thіѕ", "Waѕ", "DеoЬfusсаted", "Ву", "LеaκD")
 HOMOGLYPH_MAP = str.maketrans({
     'а': 'a', 'А': 'A',   # а cyrillic
     'е': 'e', 'Е': 'E',   # е cyrillic
@@ -67,17 +70,17 @@ def remove_watermarks(code: str) -> str:
         stripped = line.strip()
         removed = False
 
-        # 1. URL leak cũ (giữ nguyên behavior cũ)
+        # 1. URL leak cũ
         if leak_url in line:
             removed = True
 
-        # 2. URL leakd.vercel.app (mới)
+        # 2. URL leakd.vercel.app (mới) - ví dụ: -- https://leakd.vercel.app
         elif re.search(r'leakd\.vercel\.app', norm, re.IGNORECASE):
             removed = True
 
         # 3. "This File Was Deobfuscated By LeakD" - mọi biến thể chữ giả
+        #    (Thіѕ File Waѕ DеoЬfusсаted Ву LеaκD / This File Was Deobfuscated By LeakD...)
         #    Quét toàn bộ file, xóa dòng bất kể nằm ở dòng nào
-        #    Bắt: Deobfuscated / DеoЬfusсаted / Deobfuѕcatеd ... By LeakD / LеaκD ...
         elif re.search(r'deobfuscat\w*\s+by\s+leak', norm, re.IGNORECASE):
             removed = True
 
@@ -94,8 +97,10 @@ def remove_watermarks(code: str) -> str:
 
         cleaned.append(line)
 
-    
+    print(f"📊 Đã xóa {removed_count} dòng watermark")
+    return "\n".join(cleaned).strip()
 
+# ==================== XÓA HEADER WAD ====================
 def clean_wad_header(code: str) -> str:
     cleaned = re.sub(
         r'(--\[\[.*?)\s+https?://[^\]]+(\s*\]\])',
@@ -240,6 +245,7 @@ async def promdeobf_error(interaction: discord.Interaction, error):
         else:
             await interaction.response.send_message(f"❌ Lỗi: `{error}`", ephemeral=True)
 
+# ==================== /wadobf ====================
 @app_commands.check(is_owner_or_allowed_role)
 @app_commands.command(name="wadobf", description="Obfuscated Lua Script Using WeAreDevs API")
 @app_commands.describe(file="File .lua Or .txt Need Obfuscate")
@@ -387,6 +393,7 @@ async def msecdeobf_error(interaction: discord.Interaction, error):
         else:
             await interaction.response.send_message(f"❌ Error : `{error}`", ephemeral=True)
 
+# ==================== MAIN ====================
 async def main():
     await start_web_server()
     await bot.start(DISCORD_TOKEN)
