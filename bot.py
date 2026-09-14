@@ -266,82 +266,132 @@ async def promdeobf_error(interaction: discord.Interaction, error):
             await interaction.followup.send(f"❌ Lỗi: `{error}`", ephemeral=True)
         else:
             await interaction.response.send_message(f"❌ Lỗi: `{error}`", ephemeral=True)
-
 # ==================== /wadobf ====================
 @app_commands.check(is_owner_or_allowed_role)
-@app_commands.command(name="wadobf", description="Obfuscated Lua Script Using WeAreDevs API")
+@app_commands.command(
+    name="wadobf",
+    description="Obfuscated Lua Script Using WeAreDevs API"
+)
 @app_commands.describe(file="File .lua Or .txt Need Obfuscate")
 async def wadobf(interaction: discord.Interaction, file: discord.Attachment):
     await interaction.response.defer(thinking=True)
-    
-    if not file.filename.endswith(('.lua', '.txt')):
-        await interaction.followup.send("⚠️ Chỉ chấp nhận file `.lua` hoặc `.txt`!", ephemeral=True)
-        return
-    
-    if file.size > 5 * 1024 * 1024:
-        await interaction.followup.send("⚠️ File quá lớn! Giới hạn 5MB.", ephemeral=True)
-        return
-    
-    try:
-        file_bytes = await file.read()
-        try:
-            script_content = file_bytes.decode('utf-8')
-        except UnicodeDecodeError:
-            script_content = file_bytes.decode('latin-1')
-        
-        form_data = aiohttp.FormData()
-        form_data.add_field('script', script_content)
-        
-        async with bot.session.post(WAD_API_URL, data=form_data) as response:
-            if response.status != 200:
-                text = await response.text()
-                print(f"❌ WAD API {response.status}: {text[:300]}")
-                await interaction.followup.send(f"❌ WAD API lỗi HTTP {response.status}", ephemeral=True)
-                return
-            
-            data = await response.json()
-            
-            if not data.get("success", False):
-                await interaction.followup.send(f"❌ WAD API báo lỗi: {data.get('error', 'Không rõ')}", ephemeral=True)
-                return
-            
-            raw_obf = data.get("obfuscated", "")
-            if not raw_obf:
-                await interaction.followup.send("❌ Không nhận được code từ WAD API!", ephemeral=True)
-                return
-            
-            clean_code = clean_wad_header(raw_obf)
-            
-            output_name = file.filename.replace('.lua', '_obf.lua')
-            if not output_name.endswith('.lua'):
-                output_name += '.lua'
-            
-            file_obj = discord.File(
-                io.BytesIO(clean_code.encode('utf-8')),
-                filename=output_name
-            )
-            
-            embed = create_result_embed("WeAreDev", clean_code, is_obfuscation=True)
-            
-            await interaction.followup.send(embed=embed, file=file_obj)
-    
-    except Exception as e:
-        print(f"❌ Lỗi wadobf: {e}")
-        await interaction.followup.send(f"❌ Lỗi: `{e}`", ephemeral=True)
 
-@wadobf.error
-async def wadobf_error(interaction: discord.Interaction, error):
-    if isinstance(error, app_commands.CheckFailure):
-        await interaction.response.send_message(
-            "🚫 You are not authorized to use it.",
+    if not file.filename.lower().endswith(('.lua', '.txt')):
+        await interaction.followup.send(
+            "⚠️ Chỉ chấp nhận file `.lua` hoặc `.txt`!",
             ephemeral=True
         )
-    else:
-        if interaction.response.is_done():
-            await interaction.followup.send(f"❌ Lỗi: `{error}`", ephemeral=True)
-        else:
-            await interaction.response.send_message(f"❌ Lỗi: `{error}`", ephemeral=True)
+        return
 
+    if file.size > 5 * 1024 * 1024:
+        await interaction.followup.send(
+            "⚠️ File quá lớn! Giới hạn 5MB.",
+            ephemeral=True
+        )
+        return
+
+    try:
+        file_bytes = await file.read()
+
+        try:
+            script_content = file_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            script_content = file_bytes.decode("latin-1")
+
+        
+        payload = {
+            "script": script_content
+        }
+
+        async with bot.session.post(
+            WAD_API_URL,
+            json=payload
+        ) as response:
+
+            response_text = await response.text()
+
+            if response.status != 200:
+                await interaction.followup.send(
+                    f"❌ WAD API lỗi HTTP `{response.status}`\n"
+                    f"```text\n{response_text[:1000]}\n```",
+                    ephemeral=True
+                )
+                return
+
+            try:
+                data = await response.json()
+            except Exception:
+                print("❌ WAD API trả về dữ liệu không phải JSON")
+
+                await interaction.followup.send(
+                    "❌ WAD API trả về response không hợp lệ.",
+                    ephemeral=True
+                )
+                return
+
+            if not data.get("success", False):
+                error_msg = data.get(
+                    "error",
+                    "Không rõ lỗi"
+                )
+
+                await interaction.followup.send(
+                    f"❌ WAD API báo lỗi: `{error_msg}`",
+                    ephemeral=True
+                )
+                return
+
+            raw_obf = data.get("obfuscated", "")
+
+            if not raw_obf:
+                await interaction.followup.send(
+                    "❌ Không nhận được code từ WAD API!",
+                    ephemeral=True
+                )
+                return
+
+            clean_code = clean_wad_header(raw_obf)
+
+            output_name = file.filename
+
+            if output_name.lower().endswith(".lua"):
+                output_name = output_name[:-4] + "_obf.lua"
+            elif output_name.lower().endswith(".txt"):
+                output_name = output_name[:-4] + "_obf.lua"
+            else:
+                output_name += "_obf.lua"
+
+            file_obj = discord.File(
+                io.BytesIO(clean_code.encode("utf-8")),
+                filename=output_name
+            )
+
+            embed = create_result_embed(
+                "WeAreDev",
+                clean_code,
+                is_obfuscation=True
+            )
+
+            await interaction.followup.send(
+                embed=embed,
+                file=file_obj
+            )
+
+    except aiohttp.ClientError as e:
+        print(f"❌ WAD HTTP Client Error: {e}")
+
+        await interaction.followup.send(
+            f"❌ Không kết nối được WAD API:\n`{e}`",
+            ephemeral=True
+        )
+
+    except Exception as e:
+        print(f"❌ Lỗi wadobf: {e}")
+
+        await interaction.followup.send(
+            f"❌ Lỗi: `{e}`",
+            ephemeral=True
+    )
 # ==================== /msecdeobf ====================
 @app_commands.check(is_owner_or_allowed_role)
 @app_commands.command(name="msecdeobf", description="Deobfuscate Moonsec v3 Lua Script File")
