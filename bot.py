@@ -37,6 +37,7 @@ async def start_web_server():
     print(f"🌐 Web server chạy trên port {PORT}")
 
 # ==================== XÓA WATERMARK ====================
+# Bảng chuyển ký tự Cyrillic/Greek trông giống Latin -> Latin thật
 HOMOGLYPH_MAP = str.maketrans({
     'а': 'a', 'А': 'A',
     'е': 'e', 'Е': 'E',
@@ -53,25 +54,28 @@ HOMOGLYPH_MAP = str.maketrans({
     'Ԁ': 'd', 'ԁ': 'd', 'Ԃ': 'd', 'ԃ': 'd',
     'һ': 'h', 'ј': 'j', 'ǥ': 'g', 'ϲ': 'c', 'Ϲ': 'C',
     'Ο': 'O', 'ο': 'o',
+    'Ԝ': 'W', 'ԝ': 'w',   # Ԝ/ԝ cyrillic trông giống W
 })
 
+# Các ký tự ẩn / zero-width có thể chèn vào watermark
 INVISIBLE_CHARS = ('\u200b', '\u200c', '\u200d', '\ufeff', '\u2060', '\u00ad')
 
-# ⭐ THÊM MỚI: Watermark thay thế (Title_M)
+# Watermark thay thế (Title_M)
 TITLE_M = "--[[\n    This File Deobfuscate By ImMagic_Masterbot\n]]"
 
-# Danh sách câu watermark DÒNG ĐƠN (đã chuẩn hóa)
+# Các câu watermark DÒNG ĐƠN (đã chuẩn hóa: thường, 1 khoảng trắng, không ký tự giả)
 WATERMARK_SENTENCES = {
     "this file was deobfuscated by leakd",
+    "this file was deobfuscated by leakd",   # khớp "---@source Тһіѕ Fіlе Ԝaѕ Dеоbfuѕсatеԁ Ву LеaκD"
 }
 
-# ⭐ THÊM MỚI: Câu watermark nằm trong block --[[ ... ]] (đã chuẩn hóa)
+# Các câu watermark nằm trong block --[[ ... ]] (đã chuẩn hóa)
 # "Ѕourсе Сoԁе Dеоbfusсаtеԁ Ву LеаκD" -> normalize -> "source code deobfuscated by leakd"
 WATERMARK_BLOCK_SENTENCES = {
     "source code deobfuscated by leakd",
 }
 
-# ⭐ THÊM MỚI: Regex bắt block comment --[[ ... ]] (nhiều dòng)
+# Regex bắt block comment --[[ ... ]] (nhiều dòng)
 BLOCK_WATERMARK_RE = re.compile(r'--\[\[.*?\]\]', re.DOTALL)
 
 def normalize_for_match(text: str) -> str:
@@ -86,11 +90,11 @@ def is_watermark_line(line: str) -> bool:
     s = line.strip()
     if not s.startswith('--'):
         return False
-    content = re.sub(r'^-+', '', s[2:]).strip()
+    content = re.sub(r'^-+', '', s[2:]).strip()      # bỏ "--" / "---"
+    content = re.sub(r'^@\w+\s+', '', content)        # bỏ "@source " / "@Source "...
     return normalize_for_match(content) in WATERMARK_SENTENCES
 
-# ⭐ THÊM MỚI: Hàm thay block watermark --[[ ... ]] bằng Title_M
-def replace_block_watermarks(code: str) -> tuple[str, int]:
+def replace_block_watermarks(code: str) -> tuple:
     """
     Tìm các block --[[ ... ]] chứa watermark LeakD (dùng chữ Cyrillic/Greek giả)
     và URL leakd.vercel.app -> thay toàn bộ block bằng TITLE_M.
@@ -98,7 +102,7 @@ def replace_block_watermarks(code: str) -> tuple[str, int]:
     """
     replaced_count = 0
 
-    def _replacer(match: re.Match) -> str:
+    def _replacer(match):
         nonlocal replaced_count
         block = match.group(0)
         norm = normalize_for_match(block)
@@ -115,32 +119,41 @@ def replace_block_watermarks(code: str) -> tuple[str, int]:
     return new_code, replaced_count
 
 def remove_watermarks(code: str) -> str:
-    # ⭐ SỬA: BƯỚC 1 — xử lý block watermark nhiều dòng TRƯỚC (đổi thành Title_M)
+    # BƯỚC 1 — block --[[ ... ]] chứa watermark -> thay bằng Title_M
     code, block_replaced = replace_block_watermarks(code)
 
-    # BƯỚC 2 — xử lý từng dòng như cũ (xóa hẳn)
+    # BƯỚC 2 — xử lý từng dòng
     lines = code.splitlines()
     cleaned = []
     removed_count = 0
     leak_url = "discord.gg/qteAQmfJmP"
 
+    # Nếu block ở Bước 1 đã thay Title_M rồi thì không chèn thêm nữa
+    title_inserted = block_replaced > 0
+
     for i, line in enumerate(lines):
         stripped = line.strip()
+        replaced_title = False
         removed = False
 
         # 1. URL leak cũ
         if leak_url in line:
             removed = True
 
-        # 2. URL leakd.vercel.app (mới)
+        # 2. URL leakd.vercel.app
         elif re.search(r'leakd\.vercel\.app', line, re.IGNORECASE):
             removed = True
 
-        # 3. Câu "This File Was Deobfuscated By LeakD" — so khớp NGUYÊN DÒNG
+        # 3. Câu watermark dòng đơn -> THAY bằng Title_M (chỉ chèn 1 lần duy nhất)
         elif is_watermark_line(line):
             removed = True
+            replaced_title = True
+            if not title_inserted:
+                cleaned.append(TITLE_M)
+                title_inserted = True
+                print(f"🔄 Đã thay watermark dòng {i+1} bằng Title_M")
 
-        # 4. Regex cũ: discord.gg/... kèm từ khóa obfu/leak
+        # 4. discord.gg/... kèm từ khóa obfu/leak
         elif re.search(r'discord\.gg/\w+', line, re.IGNORECASE) and (
             'obfu' in line.lower() or 'leak' in line.lower()
         ):
@@ -148,12 +161,13 @@ def remove_watermarks(code: str) -> str:
 
         if removed:
             removed_count += 1
-            print(f"🗑️ Đã xóa dòng {i+1}: {stripped[:80]}...")
+            if not replaced_title:
+                print(f"🗑️ Đã xóa dòng {i+1}: {stripped[:80]}...")
             continue
 
         cleaned.append(line)
 
-    print(f"📊 Đã thay {block_replaced} block watermark, xóa {removed_count} dòng watermark")
+    print(f"📊 Đã thay {block_replaced} block + Title_M, xóa {removed_count} dòng watermark")
     return "\n".join(cleaned).strip()
 
 # ==================== XÓA HEADER WAD ====================
@@ -266,7 +280,7 @@ async def promdeobf(interaction: discord.Interaction, file: discord.Attachment):
                 await interaction.followup.send("❌ Không nhận được code từ API!", ephemeral=True)
                 return
 
-            # ⭐ remove_watermarks giờ đã tự thay block LeakD bằng Title_M
+            # remove_watermarks tự động thay block + dòng watermark bằng Title_M
             clean_code = remove_watermarks(raw_code)
             if not clean_code:
                 await interaction.followup.send("❌ File rỗng sau khi xử lý!", ephemeral=True)
@@ -456,7 +470,7 @@ async def msecdeobf(interaction: discord.Interaction, file: discord.Attachment):
                 await interaction.followup.send("❌ Không nhận được code từ API!", ephemeral=True)
                 return
 
-            # ⭐ remove_watermarks giờ đã tự thay block LeakD bằng Title_M
+            # remove_watermarks tự động thay block + dòng watermark bằng Title_M
             clean_code = remove_watermarks(raw_code)
             if not clean_code:
                 await interaction.followup.send("❌ File rỗng sau khi xử lý!", ephemeral=True)
