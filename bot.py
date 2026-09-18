@@ -37,35 +37,42 @@ async def start_web_server():
     print(f"🌐 Web server chạy trên port {PORT}")
 
 # ==================== XÓA WATERMARK ====================
-# Bảng chuyển ký tự Cyrillic/Greek trông giống Latin -> Latin thật
-# FIX QUAN TRỌNG: 'В' (Cyrillic) trông giống chữ B -> map sang 'B' (bản trước bị map sang 'V'
-# nên "By" thành "Vy", regex không bao giờ khớp). Bổ sung thêm 'ԁ' (U+0501) và các chữ "d" cyrillic.
 HOMOGLYPH_MAP = str.maketrans({
-    'а': 'a', 'А': 'A',   # а cyrillic
-    'е': 'e', 'Е': 'E',   # е cyrillic
-    'і': 'i', 'І': 'I',   # і cyrillic
-    'ѕ': 's', 'Ѕ': 'S',   # ѕ cyrillic
-    'о': 'o', 'О': 'O',   # о cyrillic
-    'р': 'p', 'Р': 'P',   # р cyrillic
-    'с': 'c', 'С': 'C',   # с cyrillic
-    'у': 'y', 'У': 'Y',   # у cyrillic
-    'х': 'x', 'Х': 'X',   # х cyrillic
-    'κ': 'k', 'ϰ': 'k',   # κ/ϰ greek -> k
-    'Ь': 'b', 'ь': 'b',   # Ь/ь cyrillic -> b
-    'В': 'B', 'в': 'b',   # В/в cyrillic -> B/b (TRÔNG GIỐNG B, không phải V)
-    'Ԁ': 'd', 'ԁ': 'd', 'Ԃ': 'd', 'ԃ': 'd',  # các chữ "d" cyrillic
+    'а': 'a', 'А': 'A',
+    'е': 'e', 'Е': 'E',
+    'і': 'i', 'І': 'I',
+    'ѕ': 's', 'Ѕ': 'S',
+    'о': 'o', 'О': 'O',
+    'р': 'p', 'Р': 'P',
+    'с': 'c', 'С': 'C',
+    'у': 'y', 'У': 'Y',
+    'х': 'x', 'Х': 'X',
+    'κ': 'k', 'ϰ': 'k',
+    'Ь': 'b', 'ь': 'b',
+    'В': 'B', 'в': 'b',
+    'Ԁ': 'd', 'ԁ': 'd', 'Ԃ': 'd', 'ԃ': 'd',
     'һ': 'h', 'ј': 'j', 'ǥ': 'g', 'ϲ': 'c', 'Ϲ': 'C',
     'Ο': 'O', 'ο': 'o',
 })
 
-# Các ký tự ẩn / zero-width có thể chèn vào watermark
 INVISIBLE_CHARS = ('\u200b', '\u200c', '\u200d', '\ufeff', '\u2060', '\u00ad')
 
-# Danh sách câu watermark (đã chuẩn hóa: thường, 1 khoảng trắng, không ký tự giả)
-# Mọi biến thể chữ giả đều chuẩn hóa về đúng câu này -> so khớp NGUYÊN DÒNG
+# ⭐ THÊM MỚI: Watermark thay thế (Title_M)
+TITLE_M = "--[[\n    This File Deobfuscate By ImMagic_Masterbot\n]]"
+
+# Danh sách câu watermark DÒNG ĐƠN (đã chuẩn hóa)
 WATERMARK_SENTENCES = {
     "this file was deobfuscated by leakd",
 }
+
+# ⭐ THÊM MỚI: Câu watermark nằm trong block --[[ ... ]] (đã chuẩn hóa)
+# "Ѕourсе Сoԁе Dеоbfusсаtеԁ Ву LеаκD" -> normalize -> "source code deobfuscated by leakd"
+WATERMARK_BLOCK_SENTENCES = {
+    "source code deobfuscated by leakd",
+}
+
+# ⭐ THÊM MỚI: Regex bắt block comment --[[ ... ]] (nhiều dòng)
+BLOCK_WATERMARK_RE = re.compile(r'--\[\[.*?\]\]', re.DOTALL)
 
 def normalize_for_match(text: str) -> str:
     """Chuẩn hóa: đổi ký tự giả -> Latin, xóa ký tự ẩn, gom khoảng trắng, viết thường."""
@@ -75,14 +82,43 @@ def normalize_for_match(text: str) -> str:
     return re.sub(r'\s+', ' ', norm).strip().lower()
 
 def is_watermark_line(line: str) -> bool:
-    """Chỉ trả True nếu CẢ DÒNG là watermark. Dòng bình thường -> False (không xóa)."""
+    """Chỉ trả True nếu CẢ DÒNG là watermark dòng đơn."""
     s = line.strip()
-    if not s.startswith('--'):          # không phải comment -> không phải watermark dạng này
+    if not s.startswith('--'):
         return False
-    content = re.sub(r'^-+', '', s[2:]).strip()   # bỏ "--" (hoặc "---") ở đầu
+    content = re.sub(r'^-+', '', s[2:]).strip()
     return normalize_for_match(content) in WATERMARK_SENTENCES
 
+# ⭐ THÊM MỚI: Hàm thay block watermark --[[ ... ]] bằng Title_M
+def replace_block_watermarks(code: str) -> tuple[str, int]:
+    """
+    Tìm các block --[[ ... ]] chứa watermark LeakD (dùng chữ Cyrillic/Greek giả)
+    và URL leakd.vercel.app -> thay toàn bộ block bằng TITLE_M.
+    Trả về (code_mới, số_block_đã_thay).
+    """
+    replaced_count = 0
+
+    def _replacer(match: re.Match) -> str:
+        nonlocal replaced_count
+        block = match.group(0)
+        norm = normalize_for_match(block)
+
+        # Phải chứa URL leakd.vercel.app VÀ ít nhất 1 câu watermark trong block
+        if "leakd.vercel.app" in norm and any(s in norm for s in WATERMARK_BLOCK_SENTENCES):
+            replaced_count += 1
+            print(f"🔄 Đã thay block watermark bằng Title_M (block #{replaced_count})")
+            return TITLE_M
+
+        return block  # không phải watermark -> giữ nguyên
+
+    new_code = BLOCK_WATERMARK_RE.sub(_replacer, code)
+    return new_code, replaced_count
+
 def remove_watermarks(code: str) -> str:
+    # ⭐ SỬA: BƯỚC 1 — xử lý block watermark nhiều dòng TRƯỚC (đổi thành Title_M)
+    code, block_replaced = replace_block_watermarks(code)
+
+    # BƯỚC 2 — xử lý từng dòng như cũ (xóa hẳn)
     lines = code.splitlines()
     cleaned = []
     removed_count = 0
@@ -100,8 +136,7 @@ def remove_watermarks(code: str) -> str:
         elif re.search(r'leakd\.vercel\.app', line, re.IGNORECASE):
             removed = True
 
-        # 3. Câu "This File Was Deobfuscated By LeakD" - LOGIC MỚI:
-        #    so khớp NGUYÊN DÒNG (đúng thì xóa, sai/không phải comment thì giữ)
+        # 3. Câu "This File Was Deobfuscated By LeakD" — so khớp NGUYÊN DÒNG
         elif is_watermark_line(line):
             removed = True
 
@@ -118,9 +153,8 @@ def remove_watermarks(code: str) -> str:
 
         cleaned.append(line)
 
-    print(f"📊 Đã xóa {removed_count} dòng watermark")
+    print(f"📊 Đã thay {block_replaced} block watermark, xóa {removed_count} dòng watermark")
     return "\n".join(cleaned).strip()
-
 
 # ==================== XÓA HEADER WAD ====================
 def clean_wad_header(code: str) -> str:
@@ -136,27 +170,27 @@ def clean_wad_header(code: str) -> str:
 def create_result_embed(obfuscator_name: str, clean_code: str, is_obfuscation: bool = False) -> discord.Embed:
     size_bytes = len(clean_code.encode('utf-8'))
     size_kb = size_bytes / 1024
-    
+
     now = datetime.now()
     date_str = now.strftime("%d/%m/%Y")
     time_str = now.strftime("%H:%M")
-    
+
     if is_obfuscation:
         title = "<:verify:1534952434890182707> **Obfuscation successful**"
         obf_icon = "<:wad:1534952520345194658>"
     else:
         title = "<:verify:1534952434890182707> **Deobfuscation successful!**"
         obf_icon = "<:Code:1534952344414847077>"
-    
+
     embed = discord.Embed(
         description=f"{title}\n\n"
                     f"{obf_icon} **Obfuscator:** {obfuscator_name}\n"
                     f"<:Code:1534952344414847077> **Size:** `{size_kb:.2f} KB`",
         color=discord.Color.purple()
     )
-    
+
     embed.set_footer(text=f"MagicDumper • {date_str} | Hôm nay lúc {time_str}")
-    
+
     return embed
 
 # ==================== BOT ====================
@@ -171,7 +205,7 @@ async def setup_hook():
     bot.tree.add_command(promdeobf)
     bot.tree.add_command(wadobf)
     bot.tree.add_command(msecdeobf)
-    
+
     if GUILD_ID:
         guild_obj = discord.Object(id=int(GUILD_ID))
         bot.tree.copy_global_to(guild=guild_obj)
@@ -201,55 +235,56 @@ def is_owner_or_allowed_role(interaction: discord.Interaction) -> bool:
 @app_commands.describe(file="File .lua Or .txt Need Deobfuscate")
 async def promdeobf(interaction: discord.Interaction, file: discord.Attachment):
     await interaction.response.defer(thinking=True)
-    
+
     if not file.filename.endswith(('.lua', '.txt')):
         await interaction.followup.send("⚠️ Chỉ chấp nhận file `.lua` hoặc `.txt`!", ephemeral=True)
         return
-    
+
     if file.size > 5 * 1024 * 1024:
         await interaction.followup.send("⚠️ File quá lớn! Giới hạn 5MB.", ephemeral=True)
         return
-    
+
     try:
         file_bytes = await file.read()
-        
+
         form_data = aiohttp.FormData()
         form_data.add_field('file', file_bytes, filename=file.filename, content_type='application/octet-stream')
-        
+
         async with bot.session.post(API_URL, data=form_data) as response:
             if response.status != 200:
                 await interaction.followup.send(f"❌ API lỗi HTTP {response.status}", ephemeral=True)
                 return
-            
+
             data = await response.json()
-            
+
             if not data.get("success", False):
                 await interaction.followup.send(f"❌ API báo lỗi: {data.get('error', 'Không rõ')}", ephemeral=True)
                 return
-            
+
             raw_code = data.get("deobfuscated_code", "")
             if not raw_code:
                 await interaction.followup.send("❌ Không nhận được code từ API!", ephemeral=True)
                 return
-            
+
+            # ⭐ remove_watermarks giờ đã tự thay block LeakD bằng Title_M
             clean_code = remove_watermarks(raw_code)
             if not clean_code:
                 await interaction.followup.send("❌ File rỗng sau khi xử lý!", ephemeral=True)
                 return
-            
+
             output_name = file.filename.replace('.lua', '_deobf.lua')
             if not output_name.endswith('.lua'):
                 output_name += '.lua'
-            
+
             file_obj = discord.File(
                 io.BytesIO(clean_code.encode('utf-8')),
                 filename=output_name
             )
-            
+
             embed = create_result_embed("Prometheus", clean_code, is_obfuscation=False)
-            
+
             await interaction.followup.send(embed=embed, file=file_obj)
-    
+
     except Exception as e:
         print(f"❌ Lỗi: {e}")
         await interaction.followup.send(f"❌ Lỗi: `{e}`", ephemeral=True)
@@ -266,6 +301,7 @@ async def promdeobf_error(interaction: discord.Interaction, error):
             await interaction.followup.send(f"❌ Lỗi: `{error}`", ephemeral=True)
         else:
             await interaction.response.send_message(f"❌ Lỗi: `{error}`", ephemeral=True)
+
 # ==================== /wadobf ====================
 @app_commands.check(is_owner_or_allowed_role)
 @app_commands.command(
@@ -298,7 +334,6 @@ async def wadobf(interaction: discord.Interaction, file: discord.Attachment):
         except UnicodeDecodeError:
             script_content = file_bytes.decode("latin-1")
 
-        
         payload = {
             "script": script_content
         }
@@ -322,7 +357,6 @@ async def wadobf(interaction: discord.Interaction, file: discord.Attachment):
                 data = await response.json()
             except Exception:
                 print("❌ WAD API trả về dữ liệu không phải JSON")
-
                 await interaction.followup.send(
                     "❌ WAD API trả về response không hợp lệ.",
                     ephemeral=True
@@ -330,11 +364,7 @@ async def wadobf(interaction: discord.Interaction, file: discord.Attachment):
                 return
 
             if not data.get("success", False):
-                error_msg = data.get(
-                    "error",
-                    "Không rõ lỗi"
-                )
-
+                error_msg = data.get("error", "Không rõ lỗi")
                 await interaction.followup.send(
                     f"❌ WAD API báo lỗi: `{error_msg}`",
                     ephemeral=True
@@ -372,14 +402,10 @@ async def wadobf(interaction: discord.Interaction, file: discord.Attachment):
                 is_obfuscation=True
             )
 
-            await interaction.followup.send(
-                embed=embed,
-                file=file_obj
-            )
+            await interaction.followup.send(embed=embed, file=file_obj)
 
     except aiohttp.ClientError as e:
         print(f"❌ WAD HTTP Client Error: {e}")
-
         await interaction.followup.send(
             f"❌ Không kết nối được WAD API:\n`{e}`",
             ephemeral=True
@@ -387,67 +413,68 @@ async def wadobf(interaction: discord.Interaction, file: discord.Attachment):
 
     except Exception as e:
         print(f"❌ Lỗi wadobf: {e}")
-
         await interaction.followup.send(
             f"❌ Lỗi: `{e}`",
             ephemeral=True
-    )
+        )
+
 # ==================== /msecdeobf ====================
 @app_commands.check(is_owner_or_allowed_role)
 @app_commands.command(name="msecdeobf", description="Deobfuscate Moonsec v3 Lua Script File")
 @app_commands.describe(file="File Only .lua Or .txt File Need Deobfuscate")
 async def msecdeobf(interaction: discord.Interaction, file: discord.Attachment):
     await interaction.response.defer(thinking=True)
-    
+
     if not file.filename.endswith(('.lua', '.txt')):
         await interaction.followup.send("⚠️ Only Work file `.lua` Or `.txt`!", ephemeral=True)
         return
-    
+
     if file.size > 5 * 1024 * 1024:
         await interaction.followup.send("⚠️ File quá lớn! Giới hạn 5MB.", ephemeral=True)
         return
-    
+
     try:
         file_bytes = await file.read()
-        
+
         form_data = aiohttp.FormData()
         form_data.add_field('file', file_bytes, filename=file.filename, content_type='application/octet-stream')
-        
+
         async with bot.session.post(MSEC_API_URL, data=form_data) as response:
             if response.status != 200:
                 await interaction.followup.send(f"❌ API lỗi HTTP {response.status}", ephemeral=True)
                 return
-            
+
             data = await response.json()
-            
+
             if not data.get("success", False):
                 error_msg = data.get("error", "Không rõ lỗi")
                 await interaction.followup.send(f"❌ API báo lỗi: {error_msg}", ephemeral=True)
                 return
-            
+
             raw_code = data.get("deobfuscated_code", "")
             if not raw_code:
                 await interaction.followup.send("❌ Không nhận được code từ API!", ephemeral=True)
                 return
-            
+
+            # ⭐ remove_watermarks giờ đã tự thay block LeakD bằng Title_M
             clean_code = remove_watermarks(raw_code)
             if not clean_code:
                 await interaction.followup.send("❌ File rỗng sau khi xử lý!", ephemeral=True)
                 return
-            
+
             output_name = file.filename.replace('.lua', '_deobf.lua')
             if not output_name.endswith('.lua'):
                 output_name += '.lua'
-            
+
             file_obj = discord.File(
                 io.BytesIO(clean_code.encode('utf-8')),
                 filename=output_name
             )
-            
+
             embed = create_result_embed("MoonSec", clean_code, is_obfuscation=False)
-            
+
             await interaction.followup.send(embed=embed, file=file_obj)
-    
+
     except Exception as e:
         print(f"❌ Lỗi msecdeobf: {e}")
         await interaction.followup.send(f"❌ Lỗi: `{e}`", ephemeral=True)
