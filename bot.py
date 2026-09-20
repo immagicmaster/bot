@@ -36,8 +36,7 @@ async def start_web_server():
     await site.start()
     print(f"🌐 Web server chạy trên port {PORT}")
 
-# ==================== XÓA WATERMARK ====================
-# Bảng chuyển ký tự Cyrillic/Greek trông giống Latin -> Latin thật
+
 HOMOGLYPH_MAP = str.maketrans({
     'а': 'a', 'А': 'A',
     'е': 'e', 'Е': 'E',
@@ -54,52 +53,40 @@ HOMOGLYPH_MAP = str.maketrans({
     'Ԁ': 'd', 'ԁ': 'd', 'Ԃ': 'd', 'ԃ': 'd',
     'һ': 'h', 'ј': 'j', 'ǥ': 'g', 'ϲ': 'c', 'Ϲ': 'C',
     'Ο': 'O', 'ο': 'o',
-    'Ԝ': 'W', 'ԝ': 'w',   # Ԝ/ԝ cyrillic trông giống W
+    'Ԝ': 'W', 'ԝ': 'w',
 })
 
-# Các ký tự ẩn / zero-width có thể chèn vào watermark
 INVISIBLE_CHARS = ('\u200b', '\u200c', '\u200d', '\ufeff', '\u2060', '\u00ad')
 
-# Watermark thay thế (Title_M)
 TITLE_M = "--[[\n    This File Deobfuscate By ImMagic_Masterbot\n]]"
 
-# Các câu watermark DÒNG ĐƠN (đã chuẩn hóa: thường, 1 khoảng trắng, không ký tự giả)
-WATERMARK_SENTENCES = {
-    "this file was deobfuscated by leakd",
-    "this file was deobfuscated by leakd",   # khớp "---@source Тһіѕ Fіlе Ԝaѕ Dеоbfuѕсatеԁ Ву LеaκD"
-}
-
-# Các câu watermark nằm trong block --[[ ... ]] (đã chuẩn hóa)
-# "Ѕourсе Сoԁе Dеоbfusсаtеԁ Ву LеаκD" -> normalize -> "source code deobfuscated by leakd"
-WATERMARK_BLOCK_SENTENCES = {
-    "source code deobfuscated by leakd",
-}
-
-# Regex bắt block comment --[[ ... ]] (nhiều dòng)
 BLOCK_WATERMARK_RE = re.compile(r'--\[\[.*?\]\]', re.DOTALL)
 
+WATERMARK_KEYWORD = "leakd"
+
+LEAK_URLS = (
+    "discord.gg/qteAQmfJmP",
+    "discord.gg/awghnh7z7t",
+    "https://discord.gg/AwGHNh7Z7T",
+    "https://leakd.vercel.app/",
+)
+
 def normalize_for_match(text: str) -> str:
-    """Chuẩn hóa: đổi ký tự giả -> Latin, xóa ký tự ẩn, gom khoảng trắng, viết thường."""
+
     norm = text.translate(HOMOGLYPH_MAP)
     for ch in INVISIBLE_CHARS:
         norm = norm.replace(ch, '')
     return re.sub(r'\s+', ' ', norm).strip().lower()
 
 def is_watermark_line(line: str) -> bool:
-    """Chỉ trả True nếu CẢ DÒNG là watermark dòng đơn."""
-    s = line.strip()
-    if not s.startswith('--'):
-        return False
-    content = re.sub(r'^-+', '', s[2:]).strip()      # bỏ "--" / "---"
-    content = re.sub(r'^@\w+\s+', '', content)        # bỏ "@source " / "@Source "...
-    return normalize_for_match(content) in WATERMARK_SENTENCES
+
+    norm = normalize_for_match(line)
+    if WATERMARK_KEYWORD in norm:
+        return True
+    # Các URL leak cũ
+    return any(url in norm for url in LEAK_URLS)
 
 def replace_block_watermarks(code: str) -> tuple:
-    """
-    Tìm các block --[[ ... ]] chứa watermark LeakD (dùng chữ Cyrillic/Greek giả)
-    và URL leakd.vercel.app -> thay toàn bộ block bằng TITLE_M.
-    Trả về (code_mới, số_block_đã_thay).
-    """
     replaced_count = 0
 
     def _replacer(match):
@@ -107,67 +94,32 @@ def replace_block_watermarks(code: str) -> tuple:
         block = match.group(0)
         norm = normalize_for_match(block)
 
-        # Phải chứa URL leakd.vercel.app VÀ ít nhất 1 câu watermark trong block
-        if "leakd.vercel.app" in norm and any(s in norm for s in WATERMARK_BLOCK_SENTENCES):
+        if WATERMARK_KEYWORD in norm or any(url in norm for url in LEAK_URLS):
             replaced_count += 1
-            print(f"🔄 Đã thay block watermark bằng Title_M (block #{replaced_count})")
+            
             return TITLE_M
 
-        return block  # không phải watermark -> giữ nguyên
-
+        return block
     new_code = BLOCK_WATERMARK_RE.sub(_replacer, code)
     return new_code, replaced_count
 
 def remove_watermarks(code: str) -> str:
-    # BƯỚC 1 — block --[[ ... ]] chứa watermark -> thay bằng Title_M
-    code, block_replaced = replace_block_watermarks(code)
 
-    # BƯỚC 2 — xử lý từng dòng
-    lines = code.splitlines()
-    cleaned = []
-    removed_count = 0
-    leak_url = "discord.gg/qteAQmfJmP"
-
-    # Nếu block ở Bước 1 đã thay Title_M rồi thì không chèn thêm nữa
     title_inserted = block_replaced > 0
 
     for i, line in enumerate(lines):
-        stripped = line.strip()
-        replaced_title = False
-        removed = False
-
-        # 1. URL leak cũ
-        if leak_url in line:
-            removed = True
-
-        # 2. URL leakd.vercel.app
-        elif re.search(r'leakd\.vercel\.app', line, re.IGNORECASE):
-            removed = True
-
-        # 3. Câu watermark dòng đơn -> THAY bằng Title_M (chỉ chèn 1 lần duy nhất)
-        elif is_watermark_line(line):
-            removed = True
-            replaced_title = True
+        if is_watermark_line(line):
+            removed_count += 1
+            
             if not title_inserted:
                 cleaned.append(TITLE_M)
                 title_inserted = True
-                print(f"🔄 Đã thay watermark dòng {i+1} bằng Title_M")
-
-        # 4. discord.gg/... kèm từ khóa obfu/leak
-        elif re.search(r'discord\.gg/\w+', line, re.IGNORECASE) and (
-            'obfu' in line.lower() or 'leak' in line.lower()
-        ):
-            removed = True
-
-        if removed:
-            removed_count += 1
-            if not replaced_title:
-                print(f"🗑️ Đã xóa dòng {i+1}: {stripped[:80]}...")
+                
             continue
 
         cleaned.append(line)
 
-    print(f"📊 Đã thay {block_replaced} block + Title_M, xóa {removed_count} dòng watermark")
+    
     return "\n".join(cleaned).strip()
 
 # ==================== XÓA HEADER WAD ====================
