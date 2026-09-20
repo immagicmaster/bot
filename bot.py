@@ -34,9 +34,8 @@ async def start_web_server():
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
-    print(f"🌐 Web server chạy trên port {PORT}")
-
-
+    
+# Watermark Detect
 HOMOGLYPH_MAP = str.maketrans({
     'а': 'a', 'А': 'A',
     'е': 'e', 'Е': 'E',
@@ -65,25 +64,21 @@ BLOCK_WATERMARK_RE = re.compile(r'--\[\[.*?\]\]', re.DOTALL)
 WATERMARK_KEYWORD = "leakd"
 
 LEAK_URLS = (
-    "discord.gg/qteAQmfJmP",
+    "discord.gg/qteaqmfjmp",
     "discord.gg/awghnh7z7t",
-    "https://discord.gg/AwGHNh7Z7T",
-    "https://leakd.vercel.app/",
+    "https://leakd.vercel.app",
 )
 
 def normalize_for_match(text: str) -> str:
-
     norm = text.translate(HOMOGLYPH_MAP)
     for ch in INVISIBLE_CHARS:
         norm = norm.replace(ch, '')
     return re.sub(r'\s+', ' ', norm).strip().lower()
 
 def is_watermark_line(line: str) -> bool:
-
     norm = normalize_for_match(line)
     if WATERMARK_KEYWORD in norm:
         return True
-    # Các URL leak cũ
     return any(url in norm for url in LEAK_URLS)
 
 def replace_block_watermarks(code: str) -> tuple:
@@ -96,31 +91,33 @@ def replace_block_watermarks(code: str) -> tuple:
 
         if WATERMARK_KEYWORD in norm or any(url in norm for url in LEAK_URLS):
             replaced_count += 1
-            
             return TITLE_M
 
         return block
+
     new_code = BLOCK_WATERMARK_RE.sub(_replacer, code)
     return new_code, replaced_count
 
 def remove_watermarks(code: str) -> str:
+    code, block_replaced = replace_block_watermarks(code)
 
+    lines = code.splitlines()
+    cleaned = []
+    removed_count = 0
     title_inserted = block_replaced > 0
 
     for i, line in enumerate(lines):
         if is_watermark_line(line):
             removed_count += 1
-            
             if not title_inserted:
                 cleaned.append(TITLE_M)
                 title_inserted = True
-                
             continue
 
         cleaned.append(line)
 
-    
     return "\n".join(cleaned).strip()
+
 
 # ==================== XÓA HEADER WAD ====================
 def clean_wad_header(code: str) -> str:
