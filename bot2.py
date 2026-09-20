@@ -9,19 +9,39 @@ from discord import app_commands
 from discord.ext import commands
 from aiohttp import web
 
+
 TOKEN = os.environ["TOKEN"]
 GUILD_ID = int(os.environ.get("GUILD_ID", "0"))
 
-intents = discord.Intents.default()
-bot = commands.Bot(command_prefix="!", intents=intents)
+MAX_FILE_SIZE = 1 * 1024 * 1024
 
-B91_ALPHABET = (
-    'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
-    '0123456789!#$%&()*+,./:;<=>?@[]^_`{|}~"'
+
+intents = discord.Intents.default()
+
+bot = commands.Bot(
+    command_prefix="!",
+    intents=intents
 )
 
+
+B91_ALPHABET = (
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+    "0123456789!#$%&()*+,./:;<=>?@[]^_`{|}~\""
+)
+
+
+def lua_str(s: str) -> str:
+    return (
+        '"'
+        + s.replace("\\", "\\\\").replace('"', '\\"')
+        + '"'
+    )
+
+
 def b91_encode(data: bytes) -> str:
-    b, n, out = 0, 0, []
+    b = 0
+    n = 0
+    out = []
 
     for byte in data:
         b |= byte << n
@@ -47,14 +67,15 @@ def b91_encode(data: bytes) -> str:
         if n > 7 or b > 90:
             out.append(B91_ALPHABET[b // 91])
 
-    return ''.join(out)
+    return "".join(out)
 
-def lua_str(s: str) -> str:
-    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 def build_encrypt_string(data: bytes) -> str:
     v1 = lua_str(b91_encode(data))
-    v2 = ",".join(lua_str(c) for c in B91_ALPHABET)
+    v2 = ",".join(
+        lua_str(c)
+        for c in B91_ALPHABET
+    )
 
     return f'''--[[ This File Was Protected By MFObfuscator EncryptString ]]
 return(function(...)
@@ -98,7 +119,9 @@ return(function(...)
         end
 
         if v>=0 then
-            out[#out+1]=string.char((b+v*2^n)%256)
+            out[#out+1]=string.char(
+                (b+v*2^n)%256
+            )
         end
 
         return table.concat(out)
@@ -108,7 +131,13 @@ return(function(...)
     return ls(v3(v1,v2))(...)
 end)(...)'''
 
-def lz_tokens(data: bytes, window=4096, min_len=3, max_len=18):
+
+def lz_tokens(
+    data: bytes,
+    window=4096,
+    min_len=3,
+    max_len=18
+):
     n = len(data)
     pos_map = {}
     tokens = []
@@ -119,39 +148,66 @@ def lz_tokens(data: bytes, window=4096, min_len=3, max_len=18):
         best_dist = 0
 
         if i + min_len <= n:
-            for j in pos_map.get(data[i:i + min_len], ()):
+            candidates = pos_map.get(
+                data[i:i + min_len],
+                ()
+            )
+
+            for j in candidates:
                 if i - j > window:
                     continue
 
-                l = min_len
+                length = min_len
 
                 while (
-                    l < max_len
-                    and i + l < n
-                    and data[j + l] == data[i + l]
+                    length < max_len
+                    and i + length < n
+                    and data[j + length] == data[i + length]
                 ):
-                    l += 1
+                    length += 1
 
-                if l > best_len:
-                    best_len = l
+                if length > best_len:
+                    best_len = length
                     best_dist = i - j
 
-                    if l == max_len:
+                    if length == max_len:
                         break
 
         if best_len >= min_len:
-            tokens.append((1, best_dist, best_len))
+            tokens.append(
+                (
+                    1,
+                    best_dist,
+                    best_len
+                )
+            )
 
-            for p in range(i, min(i + best_len, n - 2)):
-                pos_map.setdefault(data[p:p + 3], []).append(p)
+            end = min(
+                i + best_len,
+                n - 2
+            )
+
+            for p in range(i, end):
+                pos_map.setdefault(
+                    data[p:p + 3],
+                    []
+                ).append(p)
 
             i += best_len
 
         else:
-            tokens.append((0, data[i]))
+            tokens.append(
+                (
+                    0,
+                    data[i]
+                )
+            )
 
             if i + 3 <= n:
-                pos_map.setdefault(data[i:i + 3], []).append(i)
+                pos_map.setdefault(
+                    data[i:i + 3],
+                    []
+                ).append(i)
 
             i += 1
 
@@ -161,13 +217,16 @@ def lz_tokens(data: bytes, window=4096, min_len=3, max_len=18):
 
     return tokens
 
+
 def build_compress(data: bytes) -> str:
     flat = []
 
     for token in lz_tokens(data):
         flat.extend(token)
 
-    v1 = ",".join(map(str, flat))
+    v1 = ",".join(
+        map(str, flat)
+    )
 
     return f'''--[[ This File Was Protected By MFObfuscator Compress ]]
 return(function(...)
@@ -201,18 +260,28 @@ return(function(...)
     return ls(v3(v1,v2))(...)
 end)(...)'''
 
+
 KEY_CHARS = (
     string.ascii_letters
     + string.digits
     + "!@#$%^&*()-_=+[]{};:,.<>/?"
 )
 
-def gen_expr(target: int, depth=0) -> str:
+
+def gen_expr(
+    target: int,
+    depth=0
+) -> str:
+
     if depth >= 4 or target < 50:
         return f"{target:05d}"
 
     m = random.randint(7, 97)
-    q, r = divmod(target, m)
+
+    q, r = divmod(
+        target,
+        m
+    )
 
     return (
         f"({gen_expr(q, depth + 1)}*"
@@ -220,16 +289,24 @@ def gen_expr(target: int, depth=0) -> str:
         f"{gen_expr(r, depth + 1)})"
     )
 
+
 def build_xor(data: bytes) -> str:
-    real_idx = random.randint(1, 50)
+    real_idx = random.randint(
+        1,
+        50
+    )
 
-    base = random.randint(100000, 999999)
+    base = random.randint(
+        100000,
+        999999
+    )
 
-    target = base + ((real_idx - 1) - base) % 50
+    target = (
+        base
+        + ((real_idx - 1) - base) % 50
+    )
 
     expr = gen_expr(target)
-
-    assert eval(expr) == target
 
     key = "".join(
         random.choices(
@@ -238,26 +315,31 @@ def build_xor(data: bytes) -> str:
         )
     )
 
-    kb = key.encode()
+    key_bytes = key.encode()
 
-    enc = [
-        b ^ kb[i % len(kb)]
-        for i, b in enumerate(data)
+    encrypted = [
+        byte ^ key_bytes[i % len(key_bytes)]
+        for i, byte in enumerate(data)
     ]
 
-    keys = [
-        key if i + 1 == real_idx else
-        "".join(
-            random.choices(
-                KEY_CHARS,
-                k=random.randint(10, 16)
+    keys = []
+
+    for i in range(50):
+        if i + 1 == real_idx:
+            keys.append(key)
+        else:
+            keys.append(
+                "".join(
+                    random.choices(
+                        KEY_CHARS,
+                        k=random.randint(10, 16)
+                    )
+                )
             )
-        )
-        for i in range(50)
-    ]
 
     v1 = ",".join(
-        [lua_str(expr)] + [str(x) for x in enc]
+        [lua_str(expr)]
+        + [str(x) for x in encrypted]
     )
 
     v2 = ",".join(
@@ -272,6 +354,7 @@ return(function(...)
 
     local v3=function(d,keys)
         local v=(loadstring or load)("return "..d[1])()
+
         local key=keys[v%50+1]
 
         local kb={{}}
@@ -313,25 +396,43 @@ return(function(...)
     end
 
     local ls=loadstring or load
+
     return ls(v3(v1,v2))(...)
 end)(...)'''
 
+
 BUILDERS = {
-    "encryptstring": ("EncryptString", build_encrypt_string),
-    "compress": ("Compress", build_compress),
-    "xor": ("XOR", build_xor),
+    "xor": (
+        "XOR",
+        build_xor
+    ),
+
+    "encryptstring": (
+        "EncryptString",
+        build_encrypt_string
+    ),
+
+    "compress": (
+        "Compress",
+        build_compress
+    )
 }
 
+
 @bot.tree.command(
-    name="obfmode",
-    description="Obfuscate file .lua/.txt"
+    name="obfmf",
+    description="Bảo vệ file Lua/TXT bằng MFObfuscator"
 )
 @app_commands.describe(
-    file="File .lua hoặc .txt cần bảo vệ",
-    method="Chọn phương pháp obfuscation"
+    file="File .lua hoặc .txt, tối đa 1 MB",
+    method="Chọn phương pháp bảo vệ"
 )
 @app_commands.choices(
     method=[
+        app_commands.Choice(
+            name="XOR",
+            value="xor"
+        ),
         app_commands.Choice(
             name="EncryptString",
             value="encryptstring"
@@ -339,36 +440,45 @@ BUILDERS = {
         app_commands.Choice(
             name="Compress",
             value="compress"
-        ),
-        app_commands.Choice(
-            name="XOR",
-            value="xor"
-        ),
+        )
     ]
 )
-async def obf(
+async def obfmf(
     interaction: discord.Interaction,
     file: discord.Attachment,
     method: app_commands.Choice[str]
 ):
+
     await interaction.response.defer()
 
     filename = file.filename.lower()
 
-    if not filename.endswith((".lua", ".txt")):
-        return await interaction.followup.send(
-            "❌ Chỉ hỗ trợ file `.lua` hoặc `.txt`"
+    if not filename.endswith(
+        (".lua", ".txt")
+    ):
+        await interaction.followup.send(
+            "❌ File phải có đuôi `.lua` hoặc `.txt`."
         )
+        return
 
-    if getattr(file, "size", 0) > 5 * 1024 * 1024:
-        return await interaction.followup.send(
-            "❌ File quá lớn (tối đa 5MB)"
+    if file.size > MAX_FILE_SIZE:
+        await interaction.followup.send(
+            "❌ File vượt quá giới hạn **1 MB**."
         )
+        return
 
     try:
         data = await file.read()
 
-        label, builder = BUILDERS[method.value]
+        if len(data) > MAX_FILE_SIZE:
+            await interaction.followup.send(
+                "❌ File vượt quá giới hạn **1 MB**."
+            )
+            return
+
+        label, builder = BUILDERS[
+            method.value
+        ]
 
         output = await asyncio.to_thread(
             builder,
@@ -376,41 +486,59 @@ async def obf(
         )
 
     except Exception as e:
-        return await interaction.followup.send(
-            f"❌ Lỗi khi obfuscate: `{type(e).__name__}: {e}`"
+        await interaction.followup.send(
+            f"❌ Không thể xử lý file: "
+            f"`{type(e).__name__}: {e}`"
         )
+        return
 
-    buf = io.BytesIO(
+    buffer = io.BytesIO(
         output.encode("utf-8")
     )
 
     await interaction.followup.send(
         content=(
-            f"✅ Đã bảo vệ bằng **{label}** · "
-            f"`{file.filename}` → `obfuscated.lua`"
+            f"✅ **MFObfuscator**\n"
+            f"📄 File: `{file.filename}`\n"
+            f"🔐 Method: **{label}**\n"
+            f"📦 Input: `{len(data):,} bytes`\n"
+            f"📤 Output: `obfuscated.lua`"
         ),
         file=discord.File(
-            buf,
+            buffer,
             filename="obfuscated.lua"
         )
     )
 
+
 async def health(request):
     return web.Response(
-        text="MFObfuscator Bot is alive."
+        text="MFObfuscator Discord Bot: ONLINE"
     )
+
 
 async def start_web_server():
     app = web.Application()
 
-    app.router.add_get("/", health)
-    app.router.add_get("/health", health)
+    app.router.add_get(
+        "/",
+        health
+    )
+
+    app.router.add_get(
+        "/health",
+        health
+    )
 
     runner = web.AppRunner(app)
+
     await runner.setup()
 
     port = int(
-        os.environ.get("PORT", "10000")
+        os.environ.get(
+            "PORT",
+            "10000"
+        )
     )
 
     site = web.TCPSite(
@@ -422,57 +550,68 @@ async def start_web_server():
     await site.start()
 
     print(
-        f"🌐 Web server started on port {port}"
+        f"🌐 HTTP server listening on {port}"
     )
 
     return runner
 
+
 @bot.event
 async def on_ready():
+
     print(
-        f"✅ Đăng nhập thành công: {bot.user}"
+        f"✅ Bot online: {bot.user}"
     )
 
-async def sync_commands():
-    await bot.wait_until_ready()
-
     try:
+
         if GUILD_ID:
-            guild = discord.Object(id=GUILD_ID)
+
+            guild = discord.Object(
+                id=GUILD_ID
+            )
 
             bot.tree.copy_global_to(
                 guild=guild
             )
 
-            await bot.tree.sync(
+            synced = await bot.tree.sync(
                 guild=guild
             )
 
             print(
-                f"✅ Slash commands synced "
+                f"✅ Synced {len(synced)} "
+                f"slash command(s) "
                 f"to guild {GUILD_ID}"
             )
 
         else:
-            await bot.tree.sync()
+
+            synced = await bot.tree.sync()
 
             print(
-                "✅ Global slash commands synced"
+                f"✅ Synced {len(synced)} "
+                f"global slash command(s)"
             )
 
     except Exception as e:
+
         print(
-            f"❌ Command sync error: "
+            f"❌ Slash command sync failed: "
             f"{type(e).__name__}: {e}"
         )
 
+
 async def main():
+
     runner = await start_web_server()
 
     try:
         await bot.start(TOKEN)
+
     finally:
         await runner.cleanup()
+
 
 if __name__ == "__main__":
     asyncio.run(main())
