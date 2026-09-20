@@ -421,11 +421,11 @@ BUILDERS = {
 
 @bot.tree.command(
     name="obfmf",
-    description="Bảo vệ file Lua/TXT bằng MFObfuscator"
+    description="Select the file you want to obfuscate."
 )
 @app_commands.describe(
-    file="File .lua hoặc .txt, tối đa 1 MB",
-    method="Chọn phương pháp bảo vệ"
+    file="File .lua or .txt, max 1 MB",
+    method="Select Method Obfuscation"
 )
 @app_commands.choices(
     method=[
@@ -498,7 +498,7 @@ async def obfmf(
 
     await interaction.followup.send(
         content=(
-            f"✅ **MFObfuscator**\n"
+            f"✅ **MFobfuscator**\n"
             f"📄 File: `{file.filename}`\n"
             f"🔐 Method: **{label}**\n"
             f"📦 Input: `{len(data):,} bytes`\n"
@@ -513,7 +513,7 @@ async def obfmf(
 
 async def health(request):
     return web.Response(
-        text="MFObfuscator Discord Bot: ONLINE"
+        text="Bot Live 🤖"
     )
 
 
