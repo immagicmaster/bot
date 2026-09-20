@@ -11,7 +11,7 @@ from aiohttp import web
 
 
 TOKEN = os.environ["TOKEN"]
-GUILD_ID = int(os.environ.get("GUILD_ID", "0"))
+GUILD_ID = os.environ["GUILD_ID"]
 
 MAX_FILE_SIZE = 1 * 1024 * 1024
 
