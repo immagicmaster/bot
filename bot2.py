@@ -323,7 +323,7 @@ BUILDERS = {
 }
 
 @bot.tree.command(
-    name="obf",
+    name="obfmode",
     description="Obfuscate file .lua/.txt"
 )
 @app_commands.describe(
