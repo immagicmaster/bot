@@ -10,10 +10,14 @@ from discord.ext import commands
 from aiohttp import web
 
 
-TOKEN = os.environ["TOKEN"]
-GUILD_ID = os.environ["GUILD_ID"]
+TOKEN = os.environ.get("TOKEN", "").strip()
+GUILD_ID = os.environ.get("GUILD_ID", "").strip()
 
 MAX_FILE_SIZE = 1 * 1024 * 1024
+
+
+if not TOKEN:
+    raise RuntimeError("Missing TOKEN environment variable")
 
 
 intents = discord.Intents.default()
@@ -25,8 +29,10 @@ bot = commands.Bot(
 
 
 B91_ALPHABET = (
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-    "0123456789!#$%&()*+,./:;<=>?@[]^_`{|}~\""
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    "abcdefghijklmnopqrstuvwxyz"
+    "0123456789"
+    "!#$%&()*+,./:;<=>?@[]^_`{|}~\""
 )
 
 
@@ -72,6 +78,7 @@ def b91_encode(data: bytes) -> str:
 
 def build_encrypt_string(data: bytes) -> str:
     v1 = lua_str(b91_encode(data))
+
     v2 = ",".join(
         lua_str(c)
         for c in B91_ALPHABET
@@ -162,6 +169,7 @@ def lz_tokens(
                 while (
                     length < max_len
                     and i + length < n
+                    and j + length < n
                     and data[j + length] == data[i + length]
                 ):
                     length += 1
@@ -291,10 +299,7 @@ def gen_expr(
 
 
 def build_xor(data: bytes) -> str:
-    real_idx = random.randint(
-        1,
-        50
-    )
+    real_idx = random.randint(1, 50)
 
     base = random.randint(
         100000,
@@ -406,12 +411,10 @@ BUILDERS = {
         "XOR",
         build_xor
     ),
-
     "encryptstring": (
         "EncryptString",
         build_encrypt_string
     ),
-
     "compress": (
         "Compress",
         build_compress
@@ -448,7 +451,6 @@ async def obfmf(
     file: discord.Attachment,
     method: app_commands.Choice[str]
 ):
-
     await interaction.response.defer()
 
     filename = file.filename.lower()
@@ -457,7 +459,7 @@ async def obfmf(
         (".lua", ".txt")
     ):
         await interaction.followup.send(
-            "❌ File phải có đuôi `.lua` hoặc `.txt`."
+            "❌ File phải có đuôi `.lua` hoặc `.txt."
         )
         return
 
@@ -476,6 +478,12 @@ async def obfmf(
             )
             return
 
+        if method.value not in BUILDERS:
+            await interaction.followup.send(
+                "❌ Method không hợp lệ."
+            )
+            return
+
         label, builder = BUILDERS[
             method.value
         ]
@@ -487,28 +495,35 @@ async def obfmf(
 
     except Exception as e:
         await interaction.followup.send(
-            f"❌ Không thể xử lý file: "
+            f"❌ Không thể xử lý file:\n"
             f"`{type(e).__name__}: {e}`"
         )
         return
 
-    buffer = io.BytesIO(
-        output.encode("utf-8")
-    )
-
-    await interaction.followup.send(
-        content=(
-            f"✅ **MFobfuscator**\n"
-            f"📄 File: `{file.filename}`\n"
-            f"🔐 Method: **{label}**\n"
-            f"📦 Input: `{len(data):,} bytes`\n"
-            f"📤 Output: `obfuscated.lua`"
-        ),
-        file=discord.File(
-            buffer,
-            filename="obfuscated.lua"
+    try:
+        buffer = io.BytesIO(
+            output.encode("utf-8")
         )
-    )
+
+        await interaction.followup.send(
+            content=(
+                f"✅ **MFobfuscator**\n"
+                f"📄 File: `{file.filename}`\n"
+                f"🔐 Method: **{label}**\n"
+                f"📦 Input: `{len(data):,} bytes`\n"
+                f"📤 Output: `obfuscated.lua`"
+            ),
+            file=discord.File(
+                buffer,
+                filename="obfuscated.lua"
+            )
+        )
+
+    except discord.HTTPException as e:
+        await interaction.followup.send(
+            f"❌ Discord upload failed:\n"
+            f"`HTTP {e.status}: {e}`"
+        )
 
 
 async def health(request):
@@ -557,36 +572,18 @@ async def start_web_server():
 
 
 @bot.event
-async def on_ready():
+async def setup_hook():
+    print("⚙️ Running setup_hook...")
 
-    print(
-        f"✅ Bot online: {bot.user}"
-    )
+    if not GUILD_ID:
+        print(
+            "⚠️ GUILD_ID is not configured."
+        )
+        print(
+            "⚠️ Using global slash command sync."
+        )
 
-    try:
-
-        if GUILD_ID:
-
-            guild = discord.Object(
-                id=GUILD_ID
-            )
-
-            bot.tree.copy_global_to(
-                guild=guild
-            )
-
-            synced = await bot.tree.sync(
-                guild=guild
-            )
-
-            print(
-                f"✅ Synced {len(synced)} "
-                f"slash command(s) "
-                f"to guild {GUILD_ID}"
-            )
-
-        else:
-
+        try:
             synced = await bot.tree.sync()
 
             print(
@@ -594,24 +591,118 @@ async def on_ready():
                 f"global slash command(s)"
             )
 
-    except Exception as e:
+        except discord.HTTPException as e:
+            print(
+                f"❌ Global command sync failed: "
+                f"HTTP {e.status} - {e}"
+            )
+
+        return
+
+    try:
+        guild_id = int(GUILD_ID)
+
+    except ValueError:
+        print(
+            "❌ GUILD_ID must be a valid integer."
+        )
+        return
+
+    guild = discord.Object(
+        id=guild_id
+    )
+
+    bot.tree.copy_global_to(
+        guild=guild
+    )
+
+    try:
+        synced = await bot.tree.sync(
+            guild=guild
+        )
 
         print(
-            f"❌ Slash command sync failed: "
+            f"✅ Synced {len(synced)} "
+            f"slash command(s) "
+            f"to guild {guild_id}"
+        )
+
+    except discord.HTTPException as e:
+        print(
+            f"❌ Guild command sync failed: "
+            f"HTTP {e.status} - {e}"
+        )
+
+    except Exception as e:
+        print(
+            f"❌ Guild command sync failed: "
             f"{type(e).__name__}: {e}"
         )
 
 
-async def main():
+@bot.event
+async def on_ready():
+    print(
+        f"✅ Bot online: {bot.user}"
+    )
 
+    print(
+        f"🆔 Bot ID: {bot.user.id}"
+    )
+
+    if GUILD_ID:
+        print(
+            f"🏠 Guild ID: {GUILD_ID}"
+        )
+
+    print(
+        "🚀 MFObfuscator is ready."
+    )
+
+
+@bot.event
+async def on_disconnect():
+    print(
+        "⚠️ Discord connection disconnected."
+    )
+
+
+@bot.event
+async def on_resumed():
+    print(
+        "🔄 Discord connection resumed."
+    )
+
+
+async def main():
     runner = await start_web_server()
 
     try:
+        print(
+            "🚀 Starting Discord bot..."
+        )
+
         await bot.start(TOKEN)
 
     finally:
+        print(
+            "🛑 Shutting down web server..."
+        )
+
         await runner.cleanup()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+
+    except KeyboardInterrupt:
+        print(
+            "🛑 Bot stopped."
+        )
+
+    except Exception as e:
+        print(
+            f"💀 Fatal error: "
+            f"{type(e).__name__}: {e}"
+        )
