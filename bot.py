@@ -21,6 +21,9 @@ API_URL = os.environ.get("API_URL")
 MSEC_API_URL = os.environ.get("MSEC_API_URL")
 WAD_API_URL = os.environ.get("WAD_API_URL")
 
+API_KEY = os.environ.get("API_KEY", "").strip()
+MSEC_API_KEY = os.environ.get("MSEC_API_KEY", "").strip()
+
 PORT = int(os.environ.get("PORT", "10000"))
 GUILD_ID = os.environ.get("GUILD_ID").strip()
 
@@ -602,7 +605,9 @@ async def promdeobf(interaction: discord.Interaction, file: discord.Attachment):
         form_data = aiohttp.FormData()
         form_data.add_field('file', file_bytes, filename=file.filename, content_type='application/octet-stream')
 
-        async with bot.session.post(API_URL, data=form_data) as response:
+        headers = {"X-Api-Key": API_KEY}
+
+        async with bot.session.post(API_URL, data=form_data, headers=headers) as response:
             if response.status != 200:
                 await interaction.followup.send(f"❌ API lỗi HTTP {response.status}", ephemeral=True)
                 return
@@ -805,7 +810,9 @@ async def msecdeobf(interaction: discord.Interaction, file: discord.Attachment):
         form_data = aiohttp.FormData()
         form_data.add_field('file', file_bytes, filename=file.filename, content_type='application/octet-stream')
 
-        async with bot.session.post(MSEC_API_URL, data=form_data) as response:
+        headers = {"X-Api-Key": MSEC_API_KEY}
+
+        async with bot.session.post(MSEC_API_URL, data=form_data, headers=headers) as response:
             if response.status != 200:
                 await interaction.followup.send(f"❌ API lỗi HTTP {response.status}", ephemeral=True)
                 return
